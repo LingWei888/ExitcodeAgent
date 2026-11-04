@@ -165,7 +165,7 @@ p {
 .field:focus {
   outline: none;
   border-color: var(--accent);
-  background: #12100d;
+  background: var(--bg-raised);
 }
 
 .chip {
