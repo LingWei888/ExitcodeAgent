@@ -14,6 +14,7 @@ import {
 } from './vault.mjs'
 import { listServerDirectory } from './files.mjs'
 import { listModels, streamModelToClient, testModel } from './model.mjs'
+import { runAgentSteps } from './agent.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const WEB_DIST = resolve(here, '..', '..', 'web', 'dist')
@@ -165,6 +166,56 @@ async function routeApi(req, res, pathname) {
     const body = await readJson(req)
     const result = await listModels(body.connection)
     sendJson(res, 200, result)
+    return
+  }
+
+  if (isPost && pathname === '/api/agent/run') {
+    const body = await readJson(req)
+    const workspace = typeof body.workspace === 'string' ? body.workspace.trim() : ''
+    const projects = Array.isArray(auth.session.data?.projects) ? auth.session.data.projects : []
+    const allowedWorkspace = projects.some((project) => project?.directoryName === workspace)
+    if (!Array.isArray(body.turns) || !body.connection || !workspace) {
+      throw new Error('工作区和对话参数不完整。')
+    }
+    if (!allowedWorkspace) {
+      throw new Error('工作区不在当前账号的项目目录中。')
+    }
+
+    const controller = new AbortController()
+    const onClose = () => controller.abort()
+    req.on('close', onClose)
+    res.on('close', onClose)
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache',
+      'x-accel-buffering': 'no',
+      connection: 'keep-alive'
+    })
+    try {
+      for await (const event of runAgentSteps({
+        connection: body.connection,
+        turns: body.turns,
+        workspace,
+        signal: controller.signal
+      })) {
+        if (res.destroyed) break
+        res.write(`data: ${JSON.stringify(event)}\n\n`)
+      }
+      if (!res.destroyed) {
+        res.write('data: [DONE]\n\n')
+        res.end()
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Agent 执行失败。'
+      if (!res.destroyed) {
+        res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`)
+        res.write('data: [DONE]\n\n')
+        res.end()
+      }
+    } finally {
+      req.removeListener('close', onClose)
+      res.removeListener('close', onClose)
+    }
     return
   }
 

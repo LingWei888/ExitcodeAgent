@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ArrowUp, GitBranch, Settings2, Square, Terminal } from 'lucide-vue-next'
-import { appendUserMessage, createAssistantMessage, currentConnection, currentSession, store } from '../store'
-import type { Session } from '../types'
+import { ArrowUp, FolderOpen, GitBranch, Settings2, Square, Terminal } from 'lucide-vue-next'
+import { appendUserMessage, createAssistantMessage, currentConnection, currentProject, currentSession, store } from '../store'
+import type { Message, Session, ToolCall } from '../types'
+import { runAgent } from '../services/agent'
 import { sessionToTurns, streamModel, toFriendlyError } from '../services/model'
 import MessageItem from './MessageItem.vue'
 
@@ -17,8 +18,23 @@ const activeMessageId = ref('')
 const session = computed<Session>(() => currentSession() as Session)
 const messages = computed(() => session.value.messages)
 const connection = computed(() => currentConnection())
+const workspace = computed(() => currentProject()?.directoryName ?? '')
 const isRunning = computed(() => runState.value === 'running')
 const activeMessage = computed(() => messages.value.find((m) => m.id === activeMessageId.value))
+
+function upsertTool(message: Message, tool: ToolCall): void {
+  const index = message.tools.findIndex((item) => item.id === tool.id)
+  if (index >= 0) message.tools[index] = { ...message.tools[index], ...tool }
+  else message.tools.push(tool)
+}
+
+function recordFileChange(tool: ToolCall): void {
+  if (tool.kind !== 'write_file' || !tool.path) return
+  const kind = tool.changeKind === 'created' ? 'created' : 'modified'
+  const summary = tool.detail || tool.output?.split('\n')[0] || '已更新'
+  session.value.filesChanged = session.value.filesChanged.filter((item) => item.path !== tool.path)
+  session.value.filesChanged.unshift({ path: tool.path, kind, summary })
+}
 
 async function scrollToBottom(): Promise<void> {
   await nextTick()
@@ -71,11 +87,24 @@ async function send(): Promise<void> {
   let inputTokens = 0
   let outputTokens = 0
   try {
-    for await (const event of streamModel(connection.value, turns, aborter.signal)) {
-      if (event.text) message.content += event.text
-      if (event.usage) {
-        inputTokens = event.usage.input
-        outputTokens = event.usage.output
+    if (workspace.value) {
+      for await (const event of runAgent(connection.value, turns, workspace.value, aborter.signal)) {
+        if (event.type === 'text' && event.text) message.content += event.text
+        else if (event.tool) {
+          upsertTool(message, event.tool)
+          if (event.type === 'tool_result') recordFileChange(event.tool)
+        } else if (event.type === 'usage') {
+          inputTokens = event.input ?? 0
+          outputTokens = event.output ?? 0
+        }
+      }
+    } else {
+      for await (const event of streamModel(connection.value, turns, aborter.signal)) {
+        if (event.text) message.content += event.text
+        if (event.usage) {
+          inputTokens = event.usage.input
+          outputTokens = event.usage.output
+        }
       }
     }
     if (inputTokens || outputTokens) {
@@ -123,6 +152,10 @@ function suggest(text: string): void {
         <div class="conv-meta">
           <span class="chip"><GitBranch :size="12" /> {{ session.branch }}</span>
           <span class="chip">{{ connection?.label ?? '未配置模型' }}</span>
+          <span class="chip" :class="{ connected: workspace }">
+            <FolderOpen :size="12" />
+            {{ workspace ? '服务器工作区' : '未关联工作区' }}
+          </span>
           <span class="msg-count">{{ messages.length }} 条消息</span>
         </div>
       </div>
@@ -137,9 +170,9 @@ function suggest(text: string): void {
           <h2>{{ session.title }}</h2>
           <p>描述你想让模型完成的任务，它会直接在当前会话里给出答案。</p>
           <div class="suggestions">
-            <button type="button" @click="suggest('梳理一下这个项目接下来该做什么')">梳理一下这个项目接下来该做什么</button>
-            <button type="button" @click="suggest('把当前会话的要点总结给我')">把当前会话的要点总结给我</button>
-            <button type="button" @click="suggest('给这个平台想几个演示入口')">给这个平台想几个演示入口</button>
+            <button type="button" @click="suggest('列出当前工作区里的文件结构')">列出当前工作区里的文件结构</button>
+            <button type="button" @click="suggest('搜索一下代码里的 TODO')">搜索一下代码里的 TODO</button>
+            <button type="button" @click="suggest('修改 README.md，补充快速开始说明')">修改 README.md，补充快速开始说明</button>
           </div>
         </div>
       </div>
@@ -231,6 +264,12 @@ function suggest(text: string): void {
 .msg-count {
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.chip.connected {
+  border-color: rgba(15, 133, 118, 0.35);
+  color: var(--teal);
+  background: var(--teal-soft);
 }
 
 .messages-scroll {

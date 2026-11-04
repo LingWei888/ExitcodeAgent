@@ -17,6 +17,9 @@ export interface ToolCall {
   command?: string
   detail?: string
   output?: string
+  diff?: string
+  path?: string
+  changeKind?: 'created' | 'modified' | 'deleted'
   state: ToolState
 }
 

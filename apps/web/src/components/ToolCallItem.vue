@@ -40,6 +40,17 @@ const stateCopy = computed(() => {
   return '完成'
 })
 
+const diffLines = computed<Array<{ cls: string; text: string }>>(() => {
+  const raw = props.tool.diff ?? ''
+  return raw.split('\n').map((line) => {
+    let cls = ''
+    if (line.startsWith('+') && !line.startsWith('+++')) cls = 'add'
+    else if (line.startsWith('-') && !line.startsWith('---')) cls = 'del'
+    else if (line.startsWith('@@')) cls = 'hunk'
+    return { cls, text: line }
+  })
+})
+
 async function copyOutput(): Promise<void> {
   if (!props.tool.output) return
   try {
@@ -66,19 +77,29 @@ async function copyOutput(): Promise<void> {
         <span v-else class="mini-dot"></span>
         {{ stateCopy }}
       </span>
-      <ChevronDown v-if="tool.output" class="chevron" :class="{ open }" :size="14" />
+      <ChevronDown v-if="tool.output || tool.diff" class="chevron" :class="{ open }" :size="14" />
     </button>
 
-    <div v-if="open && tool.output" class="tool-output">
-      <div class="output-head">
-        <span>输出</span>
-        <button class="copy-btn" type="button" @click.stop="copyOutput">
-          <Check v-if="copied" :size="12" />
-          <Copy v-else :size="12" />
-          {{ copied ? '已复制' : '复制' }}
-        </button>
+    <div v-if="open && (tool.output || tool.diff)" class="tool-details">
+      <div v-if="tool.diff" class="diff-block">
+        <div class="output-head"><span>变更预览</span></div>
+        <div class="diff-scroll">
+          <div v-for="(line, index) in diffLines" :key="index" class="diff-line" :class="line.cls">
+            <code>{{ line.text }}</code>
+          </div>
+        </div>
       </div>
-      <pre>{{ tool.output }}</pre>
+      <div v-if="tool.output" class="tool-output">
+        <div class="output-head">
+          <span>输出</span>
+          <button class="copy-btn" type="button" @click.stop="copyOutput">
+            <Check v-if="copied" :size="12" />
+            <Copy v-else :size="12" />
+            {{ copied ? '已复制' : '复制' }}
+          </button>
+        </div>
+        <pre>{{ tool.output }}</pre>
+      </div>
     </div>
   </div>
 </template>
@@ -199,6 +220,48 @@ async function copyOutput(): Promise<void> {
 
 .chevron.open {
   transform: rotate(180deg);
+}
+
+.diff-block {
+  border-top: 1px solid var(--border);
+}
+
+.diff-scroll {
+  max-height: 240px;
+  overflow: auto;
+  padding: 4px 10px 8px 28px;
+}
+
+.diff-line {
+  min-height: 18px;
+  padding: 1px 6px;
+  margin-top: 2px;
+  border-radius: 2px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff-line code {
+  font: inherit;
+}
+
+.diff-line.add {
+  background: rgba(15, 133, 118, 0.09);
+  color: var(--teal);
+}
+
+.diff-line.del {
+  background: rgba(217, 67, 67, 0.09);
+  color: var(--danger);
+}
+
+.diff-line.hunk {
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 .tool-output {

@@ -137,6 +137,7 @@ export async function saveSessionData(token, data) {
   const session = sessions.get(token)
   if (!session) throw new Error('账号已锁定，请重新解锁。')
   if (!validateVaultData(data)) throw new Error('保存的数据格式无效。')
+  session.data = data
   return enqueueWrite(encryptRecord(session.key, data, session.salt))
 }
 

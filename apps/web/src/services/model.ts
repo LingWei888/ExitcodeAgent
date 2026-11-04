@@ -46,7 +46,7 @@ export function toFriendlyError(error: unknown): string {
   return '请求失败，请检查模型设置。'
 }
 
-async function* sseData(response: Response): AsyncGenerator<Record<string, unknown>> {
+export async function* sseData(response: Response): AsyncGenerator<Record<string, unknown>> {
   if (!response.body) return
   const reader = response.body.getReader()
   const decoder = new TextDecoder()

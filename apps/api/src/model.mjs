@@ -4,11 +4,11 @@ const PROVIDER_URLS = {
   ollama: 'http://localhost:11434/v1'
 }
 
-function stripSlash(url) {
+export function stripSlash(url) {
   return String(url || '').trim().replace(/\/+$/, '')
 }
 
-function anthropicUrl(baseUrl) {
+export function anthropicUrl(baseUrl) {
   const base = stripSlash(baseUrl)
   return base.endsWith('/v1') ? `${base}/messages` : `${base}/v1/messages`
 }
@@ -43,7 +43,7 @@ function buildUpstreamRequest(connection, turns, test = false) {
   return { url, headers, body }
 }
 
-async function upstreamError(response) {
+export async function upstreamError(response) {
   let detail = `模型服务请求失败（HTTP ${response.status}）`
   try {
     const body = await response.json()
@@ -55,7 +55,7 @@ async function upstreamError(response) {
   return detail
 }
 
-function validateConnection(connection) {
+export function validateConnection(connection) {
   return connection && typeof connection === 'object' && ['anthropic', 'openai-compatible', 'ollama'].includes(connection.provider) && connection.apiKey && connection.model
 }
 
