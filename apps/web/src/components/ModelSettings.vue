@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { KeyRound, LoaderCircle, Plus, Save, Trash2, Wifi, X, Zap } from 'lucide-vue-next'
+import { KeyRound, LoaderCircle, Plus, RefreshCcw, Save, Trash2, Wifi, X, Zap } from 'lucide-vue-next'
 import { store } from '../store'
-import { providerDefaultUrl, testConnection } from '../services/model'
+import { listModels, providerDefaultUrl, testConnection, type ModelOption } from '../services/model'
 import type { ProviderId, SavedKey } from '../types'
 
 const form = reactive({
@@ -16,6 +16,9 @@ const editingId = ref<string | null>(null)
 const notice = ref('')
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; message: string } | null>(null)
+const modelOptions = ref<ModelOption[]>([])
+const fetchingModels = ref(false)
+const modelFetchResult = ref<{ ok: boolean; message: string } | null>(null)
 
 const providerNames: Record<ProviderId, string> = {
   anthropic: 'Anthropic Claude',
@@ -46,6 +49,8 @@ function editKey(key: SavedKey): void {
   form.apiKey = ''
   notice.value = ''
   testResult.value = null
+  modelOptions.value = []
+  modelFetchResult.value = null
 }
 
 function startNew(): void {
@@ -56,6 +61,8 @@ function startNew(): void {
   form.model = ''
   notice.value = ''
   testResult.value = null
+  modelOptions.value = []
+  modelFetchResult.value = null
 }
 
 function saveKey(): void {
@@ -88,6 +95,34 @@ function removeKey(id: string): void {
   store.savedKeys = store.savedKeys.filter((item) => item.id !== id)
   if (store.currentModelId === id) store.currentModelId = store.savedKeys[0]?.id ?? ''
   if (editingId.value === id) startNew()
+}
+
+async function fetchModels(): Promise<void> {
+  if (fetchingModels.value) return
+  if (!form.baseUrl.trim() && !providerDefaultUrl(form.provider)) {
+    modelFetchResult.value = { ok: false, message: '请先填写接口地址。' }
+    return
+  }
+  if (!form.apiKey.trim() && form.provider !== 'ollama') {
+    modelFetchResult.value = { ok: false, message: '请先填写 API Key。' }
+    return
+  }
+  fetchingModels.value = true
+  modelFetchResult.value = null
+  const result = await listModels({
+    id: 'list',
+    provider: form.provider,
+    label: form.label.trim() || '模型列表',
+    baseUrl: form.baseUrl.trim() || providerDefaultUrl(form.provider),
+    model: form.model.trim(),
+    apiKey: form.apiKey.trim()
+  })
+  modelOptions.value = result.models
+  modelFetchResult.value = { ok: result.ok, message: result.message }
+  if (result.ok && result.models.length && !form.model) {
+    form.model = result.models[0].id
+  }
+  fetchingModels.value = false
 }
 
 async function runTest(): Promise<void> {
@@ -185,12 +220,22 @@ async function runTest(): Promise<void> {
               />
             </label>
 
+            <div v-if="modelOptions.length" class="form-field">
+              <span>选择模型</span>
+              <select v-model="form.model" class="field mono">
+                <option v-for="item in modelOptions" :key="item.id" :value="item.id">{{ item.name || item.id }}</option>
+              </select>
+            </div>
+
             <label class="form-field">
-              <span>模型名</span>
+              <span>模型名 <small class="manual-hint">可手动输入</small></span>
               <input v-model="form.model" class="field mono" type="text" placeholder="deepseek-chat" />
             </label>
 
             <p v-if="notice" class="form-notice warn">{{ notice }}</p>
+            <p v-if="modelFetchResult" class="form-notice" :class="{ ok: modelFetchResult.ok, warn: !modelFetchResult.ok }">
+              {{ modelFetchResult.ok ? '✓ ' : '' }}{{ modelFetchResult.message }}
+            </p>
             <p v-if="testResult" class="form-notice" :class="{ ok: testResult.ok }">
               {{ testResult.ok ? '✓ ' : '' }}{{ testResult.message }}
             </p>
@@ -199,6 +244,11 @@ async function runTest(): Promise<void> {
               <button class="btn-primary" type="submit">
                 <Save :size="15" />
                 保存接入
+              </button>
+              <button class="btn-ghost" type="button" :disabled="fetchingModels" title="通过接口和密钥获取模型列表" @click="fetchModels">
+                <LoaderCircle v-if="fetchingModels" :size="15" class="spin" />
+                <RefreshCcw v-else :size="15" />
+                {{ fetchingModels ? '获取中' : '获取模型列表' }}
               </button>
               <button class="btn-ghost" type="button" :disabled="testing" @click="runTest">
                 <LoaderCircle v-if="testing" :size="15" class="spin" />
@@ -399,6 +449,12 @@ async function runTest(): Promise<void> {
 .field.mono {
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+.manual-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .form-notice {

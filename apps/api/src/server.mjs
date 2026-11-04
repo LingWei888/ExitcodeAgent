@@ -13,7 +13,7 @@ import {
   unlockAccount
 } from './vault.mjs'
 import { listServerDirectory } from './files.mjs'
-import { streamModelToClient, testModel } from './model.mjs'
+import { listModels, streamModelToClient, testModel } from './model.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const WEB_DIST = resolve(here, '..', '..', 'web', 'dist')
@@ -161,6 +161,13 @@ async function routeApi(req, res, pathname) {
     return
   }
 
+  if (isPost && pathname === '/api/models/list') {
+    const body = await readJson(req)
+    const result = await listModels(body.connection)
+    sendJson(res, 200, result)
+    return
+  }
+
   sendJson(res, 404, { error: '接口不存在。' })
 }
 
@@ -233,5 +240,4 @@ function shutdown() {
 
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
-
 

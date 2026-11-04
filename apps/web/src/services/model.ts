@@ -1,4 +1,5 @@
 import type { Message, SavedKey } from '../types'
+import { getSessionToken } from './api'
 
 export interface ModelTurn {
   role: 'user' | 'assistant'
@@ -76,9 +77,12 @@ export async function* streamModel(
   turns: ModelTurn[],
   signal: AbortSignal
 ): AsyncGenerator<StreamEvent> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  const token = getSessionToken()
+  if (token) headers.authorization = `Bearer ${token}`
   const response = await fetch('/api/model/stream', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify({ connection, turns }),
     signal
   })
@@ -135,9 +139,12 @@ export async function testConnection(connection: SavedKey): Promise<ConnectionTe
   const started = performance.now()
   const signal = new AbortController().signal
   try {
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    const token = getSessionToken()
+    if (token) headers.authorization = `Bearer ${token}`
     const response = await fetch('/api/model/test', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify({ connection }),
       signal
     })
@@ -153,5 +160,49 @@ export async function testConnection(connection: SavedKey): Promise<ConnectionTe
   } catch (error) {
     const latencyMs = Math.round(performance.now() - started)
     return { ok: false, message: toFriendlyError(error), latencyMs }
+  }
+}
+
+export interface ModelOption {
+  id: string
+  name?: string
+}
+
+export interface ModelListResult {
+  ok: boolean
+  message: string
+  models: ModelOption[]
+  latencyMs: number
+}
+
+export async function listModels(connection: SavedKey): Promise<ModelListResult> {
+  const started = performance.now()
+  const signal = new AbortController().signal
+  try {
+    const headers: Record<string, string> = { 'content-type': 'application/json' }
+    const token = getSessionToken()
+    if (token) headers.authorization = `Bearer ${token}`
+    const response = await fetch('/api/models/list', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ connection }),
+      signal
+    })
+    const latencyMs = Math.round(performance.now() - started)
+    if (response.status === 401) {
+      return { ok: false, message: '账号已锁定，请重新解锁。', models: [], latencyMs }
+    }
+    if (!response.ok) {
+      return { ok: false, message: await readError(response), models: [], latencyMs }
+    }
+    const payload = (await response.json()) as Partial<ModelListResult>
+    return {
+      ok: payload.ok ?? false,
+      message: payload.message ?? '获取模型列表失败。',
+      models: payload.models ?? [],
+      latencyMs: payload.latencyMs ?? latencyMs
+    }
+  } catch (error) {
+    return { ok: false, message: toFriendlyError(error), models: [], latencyMs: Math.round(performance.now() - started) }
   }
 }
