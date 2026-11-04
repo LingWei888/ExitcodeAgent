@@ -56,7 +56,12 @@ function commitSession(): void {
       <section v-if="mode === 'projects'" class="list-section">
         <div class="section-head">
           <span>工作区项目</span>
-          <span class="count">{{ store.projects.length }}</span>
+          <span class="head-right">
+            <span class="count">{{ store.projects.length }}</span>
+            <button class="add-button" type="button" aria-label="新建项目" @click="store.showProjectForm = true">
+              <Plus :size="15" />
+            </button>
+          </span>
         </div>
         <button
           v-for="project in store.projects"
@@ -73,6 +78,11 @@ function commitSession(): void {
           </span>
           <span class="active-check"><Check :size="13" /></span>
         </button>
+
+        <div v-if="!store.projects.length" class="empty-note">
+          还没有项目，先新建一个。
+          <button class="create-btn" type="button" @click="store.showProjectForm = true">新建项目</button>
+        </div>
       </section>
 
       <section v-else class="list-section">
@@ -326,6 +336,23 @@ function commitSession(): void {
   color: var(--accent);
 }
 
+
+.head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.create-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 12px;
+}
 .empty-note {
   padding: 10px;
   color: var(--text-muted);

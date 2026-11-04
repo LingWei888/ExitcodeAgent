@@ -1,61 +1,55 @@
 import { reactive, watch } from 'vue'
-import { demoProjects, demoSessions } from './mock/data'
+import {
+  createLocalAccount,
+  isVaultUnlocked,
+  lockLocalAccount,
+  saveVaultData,
+  unlockLocalAccount,
+  type VaultData
+} from './services/secureStore'
 import type { Message, Project, SavedKey, Session, ToolCall } from './types'
 
-const STORAGE_KEY = 'exitcode.store.v1'
-
-interface PersistedState {
-  user: { name: string; email: string } | null
-  authed: boolean
-  projects: Project[]
-  sessions: Record<string, Session>
-  savedKeys: SavedKey[]
-  currentProjectId: string
-  currentSessionId: string
-  currentModelId: string
-}
-
-function loadPersisted(): Partial<PersistedState> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw) as Partial<PersistedState>
-    if (Array.isArray(parsed.savedKeys)) {
-      parsed.savedKeys = parsed.savedKeys.map((key) => ({
-        id: key.id,
-        provider: key.provider,
-        label: key.label,
-        baseUrl: key.baseUrl,
-        model: key.model,
-        apiKey: (key as { apiKey?: string }).apiKey ?? ''
-      }))
-    }
-    return parsed
-  } catch {
-    return {}
-  }
-}
-
-const persisted = loadPersisted()
-
 export const store = reactive({
-  authed: Boolean(localStorage.getItem('exitcode.demo.user')) || Boolean(persisted.authed),
-  user: persisted.user ?? null,
-  projects: persisted.projects ?? demoProjects,
-  sessions: persisted.sessions ?? demoSessions,
-  savedKeys: persisted.savedKeys ?? [],
-  currentProjectId: persisted.currentProjectId ?? 'p-exit',
-  currentSessionId: persisted.currentSessionId ?? 's-1',
-  currentModelId: persisted.currentModelId ?? '',
+  unlocked: false,
+  user: null as { name: string; email: string; createdAt: string } | null,
+  projects: [] as Project[],
+  sessions: {} as Record<string, Session>,
+  savedKeys: [] as SavedKey[],
+  currentProjectId: '',
+  currentSessionId: '',
+  currentModelId: '',
   showSettings: false,
+  showProjectForm: false,
   mobileSidebarOpen: false,
   mobileDrawerOpen: false
 })
 
+let saveTimer: number | undefined
+
+function collectVaultData(): VaultData {
+  return {
+    user: store.user ?? { name: '', email: '', createdAt: new Date().toISOString() },
+    projects: store.projects,
+    sessions: store.sessions,
+    savedKeys: store.savedKeys,
+    currentProjectId: store.currentProjectId,
+    currentSessionId: store.currentSessionId,
+    currentModelId: store.currentModelId
+  }
+}
+
+function scheduleVaultSave(): void {
+  if (!store.unlocked || !isVaultUnlocked()) return
+  if (saveTimer) window.clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(() => {
+    void saveVaultData(collectVaultData()).catch(() => {
+      // A failed write keeps the in-memory state; the user can retry on next change.
+    })
+  }, 220)
+}
+
 watch(
   () => ({
-    authed: store.authed,
-    user: store.user,
     projects: store.projects,
     sessions: store.sessions,
     savedKeys: store.savedKeys,
@@ -63,41 +57,81 @@ watch(
     currentSessionId: store.currentSessionId,
     currentModelId: store.currentModelId
   }),
-  (value) => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(value))
-    } catch {
-      // Storage may be unavailable; the session still works in memory.
-    }
-  },
+  () => scheduleVaultSave(),
   { deep: true }
 )
 
-export function currentProject(): Project {
-  return store.projects.find((p) => p.id === store.currentProjectId) ?? store.projects[0]
+export function applyVaultData(data: VaultData): void {
+  store.user = data.user
+  store.projects = data.projects
+  store.sessions = data.sessions
+  store.savedKeys = data.savedKeys
+  store.currentProjectId = data.currentProjectId
+  store.currentSessionId = data.currentSessionId
+  store.currentModelId = data.currentModelId
+  store.unlocked = true
 }
 
-export function currentSession(): Session {
-  return store.sessions[store.currentSessionId]
+export async function setupAccount(name: string, password: string): Promise<void> {
+  const data: VaultData = {
+    user: { name: name.trim(), email: '', createdAt: new Date().toISOString() },
+    projects: [],
+    sessions: {},
+    savedKeys: [],
+    currentProjectId: '',
+    currentSessionId: '',
+    currentModelId: ''
+  }
+  await createLocalAccount(data, password)
+  applyVaultData(data)
+}
+
+export async function unlockAccount(password: string): Promise<void> {
+  const data = await unlockLocalAccount(password)
+  applyVaultData(data)
+}
+
+export function lockAccount(): void {
+  lockLocalAccount()
+  store.unlocked = false
+  store.user = null
+  store.projects = []
+  store.sessions = {}
+  store.savedKeys = []
+  store.currentProjectId = ''
+  store.currentSessionId = ''
+  store.currentModelId = ''
+}
+
+export function currentProject(): Project | null {
+  return store.projects.find((project) => project.id === store.currentProjectId) ?? null
+}
+
+export function currentSession(): Session | null {
+  return store.sessions[store.currentSessionId] ?? null
 }
 
 export function currentConnection(): SavedKey | undefined {
   return store.savedKeys.find((key) => key.id === store.currentModelId)
 }
 
-export function login(name: string, email: string): void {
-  store.user = { name, email }
-  store.authed = true
-}
-
-export function logout(): void {
-  store.authed = false
-  store.user = null
-  localStorage.removeItem('exitcode.demo.user')
+export function createProject(name: string, description: string, directoryName?: string): Project {
+  const project: Project = {
+    id: `p-${Date.now()}`,
+    name: name.trim(),
+    description: description.trim(),
+    sessionIds: [],
+    ...(directoryName ? { directoryName, directoryPickedAt: new Date().toISOString() } : {})
+  }
+  store.projects.unshift(project)
+  store.currentProjectId = project.id
+  store.currentSessionId = ''
+  return project
 }
 
 export function appendUserMessage(text: string): Message {
   const session = currentSession()
+  if (!session) throw new Error('当前没有可用会话。')
   const now = new Date()
   const message: Message = {
     id: `um-${Date.now()}`,
@@ -114,6 +148,7 @@ export function appendUserMessage(text: string): Message {
 
 export function createAssistantMessage(): Message {
   const session = currentSession()
+  if (!session) throw new Error('当前没有可用会话。')
   const now = new Date()
   const message: Message = {
     id: `am-${Date.now()}`,
@@ -130,9 +165,10 @@ export function createAssistantMessage(): Message {
 }
 
 export function createSession(title: string): Session {
+  const project = currentProject()
+  if (!project) throw new Error('请先创建项目。')
   const now = new Date()
   const id = `s-${Date.now()}`
-  const project = currentProject()
   const session: Session = {
     id,
     title,

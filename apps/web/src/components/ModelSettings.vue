@@ -80,8 +80,8 @@ function saveKey(): void {
   if (index >= 0) store.savedKeys[index] = entry
   else store.savedKeys.push(entry)
   if (!store.currentModelId) store.currentModelId = entry.id
-  notice.value = '已保存到本机浏览器。'
   startNew()
+  notice.value = '已保存到本机浏览器。'
 }
 
 function removeKey(id: string): void {

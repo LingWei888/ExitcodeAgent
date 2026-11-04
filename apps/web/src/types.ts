@@ -10,6 +10,12 @@ export type ToolKind =
 
 export type ToolState = 'pending' | 'running' | 'done'
 
+export type FileSystemDirectoryHandle = globalThis.FileSystemDirectoryHandle & {
+  queryPermission(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>
+  requestPermission(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>
+  entries(): AsyncIterableIterator<[string, FileSystemHandle]>
+}
+
 export interface ToolCall {
   id: string
   kind: ToolKind
@@ -51,6 +57,8 @@ export interface Project {
   name: string
   description: string
   sessionIds: string[]
+  directoryName?: string
+  directoryPickedAt?: string
 }
 
 export type ProviderId = 'anthropic' | 'openai-compatible' | 'ollama'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { Bot, ChevronDown, LogOut, PanelLeftOpen, PanelRightOpen, Settings, Terminal } from 'lucide-vue-next'
-import { currentConnection, logout, store } from '../store'
+import { Bot, ChevronDown, Lock, PanelLeftOpen, PanelRightOpen, Settings, Terminal } from 'lucide-vue-next'
+import { currentConnection, lockAccount, store } from '../store'
 
 const modelMenuOpen = ref(false)
 const userMenuOpen = ref(false)
@@ -34,7 +34,7 @@ function selectModel(id: string): void {
       </button>
       <span class="logo-mark"><Terminal :size="17" /></span>
       <span class="brand">ExitcodeAgent</span>
-      <span class="env-chip"><span class="dot" :class="{ pulse: Boolean(activeConnection), warn: !activeConnection }"></span>纯前端直连</span>
+      <span class="env-chip"><span class="dot" :class="{ pulse: Boolean(activeConnection), warn: !activeConnection }"></span>本地加密存储</span>
     </div>
 
     <div class="right">
@@ -86,9 +86,9 @@ function selectModel(id: string): void {
             <strong>{{ store.user?.name }}</strong>
             <small>{{ store.user?.email }}</small>
           </div>
-          <button class="menu-item" type="button" @click="logout">
-            <LogOut :size="15" />
-            <span>退出登录</span>
+          <button class="menu-item" type="button" @click="lockAccount">
+            <Lock :size="15" />
+            <span>锁定账号</span>
           </button>
         </div>
       </div>

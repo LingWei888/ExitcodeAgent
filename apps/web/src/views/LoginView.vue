@@ -1,32 +1,62 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Boxes, Cpu, KeyRound, ShieldCheck, Terminal } from 'lucide-vue-next'
-import { login } from '../store'
+import { Boxes, KeyRound, LockKeyhole, ShieldCheck, Terminal } from 'lucide-vue-next'
+import { hasLocalAccount } from '../services/secureStore'
+import { setupAccount, unlockAccount } from '../store'
 
-const mode = ref<'login' | 'register'>('login')
-const name = ref('陈工')
-const email = ref('chen@team.local')
-const password = ref('')
+const hasAccount = ref(false)
+const busy = ref(false)
 const error = ref('')
 
-function submit(): void {
-  if (!email.value.trim() || !password.value.trim()) {
-    error.value = '请填写账号名和口令'
+const name = ref('')
+const password = ref('')
+const confirmPassword = ref('')
+
+onMounted(async () => {
+  hasAccount.value = await hasLocalAccount()
+})
+
+async function submit(): Promise<void> {
+  if (busy.value) return
+  error.value = ''
+
+  if (!hasAccount.value) {
+    if (!name.value.trim()) {
+      error.value = '请填写本机账号名称。'
+      return
+    }
+    if (password.value.length < 8) {
+      error.value = '口令至少 8 位。'
+      return
+    }
+    if (password.value !== confirmPassword.value) {
+      error.value = '两次输入的口令不一致。'
+      return
+    }
+    busy.value = true
+    try {
+      await setupAccount(name.value, password.value)
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : '创建账号失败。'
+    } finally {
+      busy.value = false
+    }
     return
   }
-  error.value = ''
-  login(name.value.trim() || email.value.split('@')[0], email.value.trim())
-}
 
-function demoEnter(): void {
-  login('演示用户', 'demo@exitcode.local')
-}
-
-onMounted(() => {
-  if (new URLSearchParams(window.location.search).get('demo') === '1') {
-    demoEnter()
+  if (!password.value) {
+    error.value = '请输入口令。'
+    return
   }
-})
+  busy.value = true
+  try {
+    await unlockAccount(password.value)
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '解锁失败。'
+  } finally {
+    busy.value = false
+  }
+}
 </script>
 
 <template>
@@ -37,37 +67,37 @@ onMounted(() => {
         <span class="brand-name">ExitcodeAgent</span>
       </div>
 
-      <p class="eyebrow">自托管 智能体 协作</p>
-      <h1>对话驱动的工作台，直连你自己的模型</h1>
-      <p class="lead">管理项目与会话，用自带的 API Key 直连 Claude、DeepSeek 或本地 Ollama，密钥只保存在本机浏览器。</p>
+      <p class="eyebrow">本地 加密 工作台</p>
+      <h1>一份数据，一个账号，全部留在本机</h1>
+      <p class="lead">项目、会话、模型密钥和口令都由本机加密保管。解锁后即可直连 Claude、DeepSeek 或本地 Ollama。</p>
 
       <div class="status-matrix">
         <div class="status-cell">
-          <span class="status-icon"><Cpu :size="16" /></span>
+          <span class="status-icon"><ShieldCheck :size="16" /></span>
           <div>
-            <span class="status-label">会话数据</span>
-            <strong><span class="dot"></span> 本机保存</strong>
+            <span class="status-label">本地存储</span>
+            <strong><span class="dot"></span> 加密保存</strong>
+          </div>
+        </div>
+        <div class="status-cell">
+          <span class="status-icon"><LockKeyhole :size="16" /></span>
+          <div>
+            <span class="status-label">唯一账号</span>
+            <strong>仅一个</strong>
           </div>
         </div>
         <div class="status-cell">
           <span class="status-icon"><KeyRound :size="16" /></span>
           <div>
-            <span class="status-label">模型接入</span>
-            <strong>直连可用</strong>
-          </div>
-        </div>
-        <div class="status-cell">
-          <span class="status-icon"><ShieldCheck :size="16" /></span>
-          <div>
             <span class="status-label">历史记录</span>
-            <strong>本地保留</strong>
+            <strong>本机保留</strong>
           </div>
         </div>
         <div class="status-cell">
           <span class="status-icon"><Boxes :size="16" /></span>
           <div>
-            <span class="status-label">项目空间</span>
-            <strong>2 个已建</strong>
+            <span class="status-label">模型接入</span>
+            <strong>直连可用</strong>
           </div>
         </div>
       </div>
@@ -75,35 +105,45 @@ onMounted(() => {
 
     <section class="form-panel">
       <div class="form-wrap">
-        <h2>进入工作台</h2>
-        <p class="form-hint">演示环境，任意账号和口令即可进入。</p>
+        <template v-if="!hasAccount">
+          <h2>首次设置</h2>
+          <p class="form-hint">本机只会创建一个账号，创建后不再提供注册入口。</p>
 
-        <div class="mode-tabs" role="tablist">
-          <button :class="{ active: mode === 'login' }" type="button" @click="mode = 'login'">登录</button>
-          <button :class="{ active: mode === 'register' }" type="button" @click="mode = 'register'">注册</button>
-        </div>
+          <form class="login-form" @submit.prevent="submit">
+            <label class="form-field">
+              <span>账号名称</span>
+              <input v-model="name" class="field" type="text" placeholder="你的名字" autocomplete="username" />
+            </label>
+            <label class="form-field">
+              <span>口令</span>
+              <input v-model="password" class="field" type="password" placeholder="至少 8 位" autocomplete="new-password" />
+            </label>
+            <label class="form-field">
+              <span>确认口令</span>
+              <input v-model="confirmPassword" class="field" type="password" placeholder="再次输入" autocomplete="new-password" />
+            </label>
+            <p v-if="error" class="form-error">{{ error }}</p>
+            <button class="btn-primary submit-btn" type="submit" :disabled="busy">
+              {{ busy ? '创建中' : '创建本机账号' }}
+            </button>
+          </form>
+        </template>
 
-        <form class="login-form" @submit.prevent="submit">
-          <label v-if="mode === 'register'" class="form-field">
-            <span>姓名</span>
-            <input v-model="name" class="field" type="text" placeholder="你的名字" autocomplete="name" />
-          </label>
-          <label class="form-field">
-            <span>邮箱或用户名</span>
-            <input v-model="email" class="field" type="text" placeholder="you@team.local" autocomplete="username" />
-          </label>
-          <label class="form-field">
-            <span>口令</span>
-            <input v-model="password" class="field" type="password" placeholder="••••••••" autocomplete="current-password" />
-          </label>
-          <p v-if="error" class="form-error">{{ error }}</p>
-          <button class="btn-primary submit-btn" type="submit">
-            {{ mode === 'login' ? '登录' : '创建账号' }}
-          </button>
-        </form>
+        <template v-else>
+          <h2>解锁本机工作台</h2>
+          <p class="form-hint">输入本机账号口令解锁加密数据。</p>
 
-        <div class="divider"><span>或</span></div>
-        <button class="btn-ghost demo-btn" type="button" @click="demoEnter">直接进入演示工作台</button>
+          <form class="login-form" @submit.prevent="submit">
+            <label class="form-field">
+              <span>口令</span>
+              <input v-model="password" class="field" type="password" placeholder="••••••••" autocomplete="current-password" />
+            </label>
+            <p v-if="error" class="form-error">{{ error }}</p>
+            <button class="btn-primary submit-btn" type="submit" :disabled="busy">
+              {{ busy ? '解锁中' : '解锁' }}
+            </button>
+          </form>
+        </template>
       </div>
     </section>
   </main>
@@ -125,8 +165,8 @@ onMounted(() => {
   padding: clamp(40px, 7vw, 96px);
   overflow: hidden;
   background:
-    linear-gradient(rgba(28, 37, 34, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(28, 37, 34, 0.045) 1px, transparent 1px),
+    linear-gradient(rgba(28, 37, 34, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(28, 37, 34, 0.05) 1px, transparent 1px),
     var(--bg-soft);
   background-size: 44px 44px;
   border-right: 1px solid var(--border);
@@ -137,7 +177,7 @@ onMounted(() => {
   position: absolute;
   inset: auto -16% -44% 28%;
   height: 70%;
-  border: 1px solid rgba(255, 106, 43, 0.24);
+  border: 1px solid rgba(223, 79, 30, 0.24);
   border-radius: 50%;
   transform: rotate(-12deg);
   pointer-events: none;
@@ -165,7 +205,6 @@ onMounted(() => {
 
 .brand-name {
   font-weight: 700;
-  letter-spacing: 0;
 }
 
 .eyebrow {
@@ -180,7 +219,6 @@ h1 {
   font-size: clamp(30px, 4.4vw, 52px);
   line-height: 1.08;
   font-weight: 720;
-  letter-spacing: 0;
 }
 
 .lead {
@@ -221,7 +259,6 @@ h1 {
 .status-cell div {
   display: flex;
   flex-direction: column;
-  min-width: 0;
 }
 
 .status-label {
@@ -252,7 +289,6 @@ h2 {
   margin: 0 0 6px;
   font-size: 24px;
   font-weight: 700;
-  letter-spacing: 0;
 }
 
 .form-hint {
@@ -260,33 +296,11 @@ h2 {
   font-size: 13px;
 }
 
-.mode-tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 3px;
-  margin: 26px 0 20px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: var(--bg-inset);
-}
-
-.mode-tabs button {
-  padding: 8px;
-  border-radius: var(--radius-s);
-  color: var(--text-muted);
-  font-weight: 600;
-}
-
-.mode-tabs button.active {
-  background: var(--bg-raised);
-  color: var(--text);
-}
-
 .login-form {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  margin-top: 26px;
 }
 
 .form-field {
@@ -307,27 +321,6 @@ h2 {
 
 .submit-btn {
   margin-top: 6px;
-}
-
-.divider {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 22px 0 14px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.divider::before,
-.divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-
-.demo-btn {
-  width: 100%;
 }
 
 @media (max-width: 900px) {

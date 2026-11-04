@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { ArrowUp, GitBranch, Settings2, Square, Terminal } from 'lucide-vue-next'
 import { appendUserMessage, createAssistantMessage, currentConnection, currentSession, store } from '../store'
+import type { Session } from '../types'
 import { sessionToTurns, streamModel, toFriendlyError } from '../services/model'
 import MessageItem from './MessageItem.vue'
 
@@ -13,7 +14,7 @@ const inputError = ref('')
 const controller = ref<AbortController | null>(null)
 const activeMessageId = ref('')
 
-const session = computed(() => currentSession())
+const session = computed<Session>(() => currentSession() as Session)
 const messages = computed(() => session.value.messages)
 const connection = computed(() => currentConnection())
 const isRunning = computed(() => runState.value === 'running')
@@ -185,7 +186,7 @@ function suggest(text: string): void {
           <span class="dot" :class="{ pulse: isRunning, warn: !connection }"></span>
           <span>{{ isRunning ? '生成中' : connection?.label ?? '未配置模型' }}</span>
           <span class="divider"></span>
-          <span class="demo-note">本地直连，密钥存于本机浏览器</span>
+          <span class="demo-note">数据加密保存在本机</span>
         </div>
       </div>
     </footer>

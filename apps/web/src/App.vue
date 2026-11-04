@@ -5,6 +5,6 @@ import WorkspaceView from './views/WorkspaceView.vue'
 </script>
 
 <template>
-  <LoginView v-if="!store.authed" />
+  <LoginView v-if="!store.unlocked" />
   <WorkspaceView v-else />
 </template>
