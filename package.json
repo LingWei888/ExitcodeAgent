@@ -1,0 +1,13 @@
+{
+  "name": "exitcode-agent",
+  "private": true,
+  "scripts": {
+    "dev:web": "pnpm --filter @exitcode/web dev",
+    "build:web": "pnpm --filter @exitcode/web build",
+    "preview:web": "pnpm --filter @exitcode/web preview"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

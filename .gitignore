@@ -1,0 +1,29 @@
+/.idea/
+**/node_modules/
+
+# Build output
+dist/
+coverage/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+*.local
+
+# Local preview artifacts
+.shots/
+
+pnpm store cache
+.pnpm-store/
+
+TypeScript build cache
+*.tsbuildinfo
