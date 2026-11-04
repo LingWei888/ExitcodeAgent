@@ -36,7 +36,7 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
     <div class="drawer-head">
       <div>
         <h2>工作区状态</h2>
-        <span class="drawer-sub">{{ session.title }} · {{ session.branch }}</span>
+        <span class="drawer-sub">{{ session.title }}，{{ session.branch }}</span>
       </div>
       <button class="icon-btn close-toggle" type="button" aria-label="关闭状态面板" @click="store.mobileDrawerOpen = false">
         <X :size="17" />
@@ -63,7 +63,7 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
         <div v-if="commands.length" class="cmd-list">
           <div v-for="tool in commands" :key="tool.id" class="cmd-row">
             <div class="cmd-line"><span class="prompt">$</span>{{ tool.command }}</div>
-            <div class="cmd-meta">{{ tool.kind.replace('_', ' ') }} · {{ tool.output?.split('\n')[0] }}</div>
+            <div class="cmd-meta">{{ tool.kind.replace('_', ' ') }}，{{ tool.output?.split('\n')[0] }}</div>
           </div>
         </div>
         <div v-else class="empty-block">执行过的命令会显示在这里。</div>
@@ -168,7 +168,7 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
   height: 17px;
   padding: 0 5px;
   border-radius: 999px;
-  background: rgba(245, 238, 227, 0.07);
+  background: rgba(28, 37, 34, 0.07);
   color: var(--text-muted);
   font-size: 10px;
 }
@@ -188,7 +188,7 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
 }
 
 .file-row:hover {
-  background: rgba(245, 238, 227, 0.04);
+  background: rgba(28, 37, 34, 0.04);
 }
 
 .file-badge {
@@ -196,7 +196,7 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
   min-width: 36px;
   padding: 1px 5px;
   border-radius: 999px;
-  background: rgba(245, 238, 227, 0.08);
+  background: rgba(28, 37, 34, 0.08);
   color: var(--text-secondary);
   font-size: 10px;
   text-align: center;
@@ -209,11 +209,11 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
 
 .file-badge.modified {
   background: rgba(255, 106, 43, 0.14);
-  color: #ff9a6b;
+  color: #bd4713;
 }
 
 .file-badge.deleted {
-  background: rgba(255, 92, 92, 0.13);
+  background: rgba(217, 67, 67, 0.1);
   color: var(--danger);
 }
 
@@ -305,7 +305,7 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
   height: 28px;
   flex: none;
   border-radius: var(--radius-s);
-  background: rgba(245, 238, 227, 0.06);
+  background: rgba(28, 37, 34, 0.06);
   color: var(--text-secondary);
 }
 
@@ -326,7 +326,7 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
 
 .model-card {
   padding: 10px;
-  border: 1px solid rgba(47, 196, 174, 0.24);
+  border: 1px solid rgba(15, 133, 118, 0.28);
   border-radius: var(--radius-m);
   background: var(--teal-soft);
 }
@@ -346,7 +346,7 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
 .status-pill {
   padding: 1px 7px;
   border-radius: 999px;
-  background: rgba(245, 238, 227, 0.08);
+  background: rgba(28, 37, 34, 0.08);
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 10px;

@@ -85,10 +85,23 @@ async function copyOutput(): Promise<void> {
 
 <style scoped>
 .tool-call {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: var(--bg-inset);
+  position: relative;
+  border: 0;
+  border-left: 2px solid var(--border);
+  background: transparent;
   overflow: hidden;
+}
+
+.tool-call.running {
+  border-left-color: var(--accent);
+}
+
+.tool-call.done {
+  border-left-color: var(--teal);
+}
+
+.tool-row:not(:disabled):hover {
+  background: var(--bg-soft);
 }
 
 .tool-row {
@@ -114,7 +127,7 @@ async function copyOutput(): Promise<void> {
   height: 26px;
   flex: none;
   border-radius: var(--radius-s);
-  background: rgba(245, 238, 227, 0.06);
+  background: rgba(28, 37, 34, 0.06);
   color: var(--text-muted);
 }
 
@@ -214,16 +227,16 @@ async function copyOutput(): Promise<void> {
 }
 
 .copy-btn:hover {
-  background: rgba(245, 238, 227, 0.07);
+  background: rgba(28, 37, 34, 0.07);
   color: var(--text);
 }
 
 pre {
   max-height: 220px;
-  margin: 0;
-  padding: 4px 10px 10px;
+  margin: 0 0 8px 28px;
+  padding: 8px 10px;
   overflow: auto;
-  color: #d8d1c6;
+  color: #2b3531;
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.6;

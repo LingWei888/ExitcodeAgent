@@ -64,7 +64,7 @@ import ModelSettings from '../components/ModelSettings.vue'
     inset: 52px 0 0;
     z-index: 31;
     display: block;
-    background: rgba(10, 9, 7, 0.6);
+    background: rgba(28, 37, 34, 0.28);
   }
 }
 </style>

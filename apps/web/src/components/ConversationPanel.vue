@@ -128,7 +128,7 @@ function suggest(text: string): void {
           <span class="dot" :class="{ pulse: isRunning, warn: false }"></span>
           <span>{{ isRunning ? '代理运行中' : '空闲' }}</span>
           <span class="divider"></span>
-          <span class="demo-note">本地演示 · 假模型</span>
+          <span class="demo-note">本地演示，假模型</span>
         </div>
       </div>
     </footer>
@@ -253,7 +253,7 @@ function suggest(text: string): void {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-m);
   background: var(--bg-soft);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  box-shadow: none;
 }
 
 .composer-inner {

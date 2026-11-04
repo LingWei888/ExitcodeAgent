@@ -157,7 +157,7 @@ function selectModel(id: string): void {
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
-  background: rgba(245, 238, 227, 0.03);
+  background: rgba(28, 37, 34, 0.03);
   color: var(--text-secondary);
   font-size: 13px;
 }
@@ -231,7 +231,7 @@ function selectModel(id: string): void {
 
 .menu-item:hover,
 .menu-item.active {
-  background: rgba(245, 238, 227, 0.07);
+  background: rgba(28, 37, 34, 0.07);
   color: var(--text);
 }
 
@@ -256,7 +256,7 @@ function selectModel(id: string): void {
   min-width: 92px;
   padding: 2px 6px;
   border-radius: 999px;
-  background: rgba(245, 238, 227, 0.08);
+  background: rgba(28, 37, 34, 0.08);
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 10px;
@@ -265,7 +265,7 @@ function selectModel(id: string): void {
 
 .provider-badge.anthropic {
   background: rgba(255, 106, 43, 0.14);
-  color: #ff9a6b;
+  color: #bd4713;
 }
 
 .provider-badge.openai-compatible {
@@ -274,7 +274,7 @@ function selectModel(id: string): void {
 }
 
 .provider-badge.ollama {
-  background: rgba(246, 193, 91, 0.14);
+  background: rgba(169, 116, 16, 0.16);
   color: var(--warning);
 }
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ArrowRight, Boxes, Cpu, KeyRound, ShieldCheck, Terminal } from 'lucide-vue-next'
+import { Boxes, Cpu, KeyRound, ShieldCheck, Terminal } from 'lucide-vue-next'
 import { login } from '../store'
 
 const mode = ref<'login' | 'register'>('login')
@@ -99,7 +99,6 @@ onMounted(() => {
           <p v-if="error" class="form-error">{{ error }}</p>
           <button class="btn-primary submit-btn" type="submit">
             {{ mode === 'login' ? '登录' : '创建账号' }}
-            <ArrowRight :size="16" />
           </button>
         </form>
 
@@ -126,8 +125,8 @@ onMounted(() => {
   padding: clamp(40px, 7vw, 96px);
   overflow: hidden;
   background:
-    linear-gradient(rgba(245, 238, 227, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(245, 238, 227, 0.045) 1px, transparent 1px),
+    linear-gradient(rgba(28, 37, 34, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(28, 37, 34, 0.045) 1px, transparent 1px),
     var(--bg-soft);
   background-size: 44px 44px;
   border-right: 1px solid var(--border);
@@ -191,21 +190,20 @@ h1 {
 }
 
 .status-matrix {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 1px;
-  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  max-width: 460px;
   margin-top: 44px;
-  border: 1px solid var(--border);
-  background: var(--border);
+  border-top: 1px solid var(--border);
 }
 
 .status-cell {
   display: flex;
   gap: 12px;
   align-items: center;
-  padding: 14px;
-  background: var(--bg-soft);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
 }
 
 .status-icon {
@@ -215,7 +213,7 @@ h1 {
   width: 30px;
   height: 30px;
   border-radius: var(--radius-s);
-  background: rgba(245, 238, 227, 0.06);
+  background: rgba(28, 37, 34, 0.06);
   color: var(--text-secondary);
   flex: none;
 }

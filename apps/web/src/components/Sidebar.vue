@@ -108,7 +108,7 @@ function commitSession(): void {
           <span class="session-icon"><Radio :size="14" /></span>
           <span class="session-copy">
             <strong>{{ session.title }}</strong>
-            <small>{{ session.updatedAt }} · {{ session.messages.length }} 条消息</small>
+            <small>{{ session.updatedAt }} ，{{ session.messages.length }} 条消息</small>
           </span>
         </button>
 
@@ -194,7 +194,7 @@ function commitSession(): void {
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  background: rgba(245, 238, 227, 0.07);
+  background: rgba(28, 37, 34, 0.07);
   font-size: 11px;
 }
 
@@ -213,7 +213,7 @@ function commitSession(): void {
 
 .project-item:hover,
 .session-item:hover {
-  background: rgba(245, 238, 227, 0.04);
+  background: rgba(28, 37, 34, 0.04);
 }
 
 .project-item.active,
@@ -230,7 +230,7 @@ function commitSession(): void {
   height: 30px;
   flex: none;
   border-radius: var(--radius-s);
-  background: rgba(245, 238, 227, 0.06);
+  background: rgba(28, 37, 34, 0.06);
   color: var(--text-secondary);
 }
 
@@ -292,7 +292,7 @@ function commitSession(): void {
 }
 
 .add-button:hover {
-  background: rgba(245, 238, 227, 0.08);
+  background: rgba(28, 37, 34, 0.08);
   color: var(--text);
 }
 

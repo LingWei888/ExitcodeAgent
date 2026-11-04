@@ -4,7 +4,7 @@ export const demoProjects: Project[] = [
   {
     id: 'p-exit',
     name: 'exit-code',
-    description: '自托管智能体平台 · 前端原型',
+    description: '自托管智能体平台，前端原型',
     sessionIds: ['s-1', 's-2']
   },
   {

@@ -184,7 +184,7 @@ function removeKey(id: string): void {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(10, 9, 7, 0.72);
+  background: rgba(28, 37, 34, 0.32);
   backdrop-filter: blur(4px);
 }
 
@@ -256,21 +256,27 @@ function removeKey(id: string): void {
 .key-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 .key-row {
   display: flex;
   align-items: flex-start;
   gap: 11px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: var(--bg-soft);
+  padding: 12px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.key-row:last-child {
+  border-bottom: 0;
 }
 
 .key-row.editing {
-  border-color: rgba(255, 106, 43, 0.42);
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
 }
 
 .key-icon {
@@ -321,7 +327,7 @@ function removeKey(id: string): void {
 }
 
 .icon-btn.danger:hover {
-  background: rgba(255, 92, 92, 0.12);
+  background: rgba(217, 67, 67, 0.1);
   color: var(--danger);
 }
 

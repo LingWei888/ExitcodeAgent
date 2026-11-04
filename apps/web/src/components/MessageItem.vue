@@ -92,7 +92,7 @@ async function copyContent(): Promise<void> {
 }
 
 .avatar.user {
-  background: rgba(245, 238, 227, 0.08);
+  background: rgba(28, 37, 34, 0.08);
   color: var(--text-secondary);
 }
 
@@ -147,7 +147,7 @@ async function copyContent(): Promise<void> {
 }
 
 .copy-link:hover {
-  background: rgba(245, 238, 227, 0.07);
+  background: rgba(28, 37, 34, 0.07);
   color: var(--text);
 }
 
@@ -155,11 +155,9 @@ async function copyContent(): Promise<void> {
   display: inline-block;
   max-width: 640px;
   padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-m);
-  border-top-left-radius: 2px;
-  background: var(--bg-raised);
-  color: var(--text);
+  border-radius: 2px;
+  background: var(--text);
+  color: var(--bg);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -189,7 +187,7 @@ async function copyContent(): Promise<void> {
   margin-bottom: 10px;
   padding: 10px 12px;
   border-left: 2px solid var(--warning);
-  background: rgba(246, 193, 91, 0.06);
+  background: rgba(169, 116, 16, 0.08);
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.65;

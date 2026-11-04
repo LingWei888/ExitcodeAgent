@@ -1,24 +1,24 @@
 :root {
-  color-scheme: dark;
-  --bg: #14120f;
-  --bg-soft: #1a1713;
-  --bg-raised: #211d18;
-  --bg-inset: #0f0d0b;
-  --border: rgba(245, 238, 227, 0.09);
-  --border-strong: rgba(245, 238, 227, 0.18);
-  --text: #f2ede4;
-  --text-secondary: #b0a9a0;
-  --text-muted: #7d766d;
-  --accent: #ff6a2b;
-  --accent-hover: #ff7d45;
-  --accent-soft: rgba(255, 106, 43, 0.15);
-  --teal: #2fc4ae;
-  --teal-soft: rgba(47, 196, 174, 0.14);
-  --danger: #ff5c5c;
-  --warning: #f6c15b;
+  color-scheme: light;
+  --bg: #fbfcfb;
+  --bg-soft: #f2f5f3;
+  --bg-raised: #ffffff;
+  --bg-inset: #e9ecea;
+  --border: rgba(28, 37, 34, 0.11);
+  --border-strong: rgba(28, 37, 34, 0.2);
+  --text: #1c2522;
+  --text-secondary: #56615c;
+  --text-muted: #8a948f;
+  --accent: #df4f1e;
+  --accent-hover: #c74415;
+  --accent-soft: rgba(223, 79, 30, 0.1);
+  --teal: #0f8576;
+  --teal-soft: rgba(15, 133, 118, 0.09);
+  --danger: #d94343;
+  --warning: #a97410;
   --radius-s: 3px;
   --radius-m: 6px;
-  --shadow-pop: 0 14px 36px rgba(0, 0, 0, 0.38);
+  --shadow-pop: 0 14px 36px rgba(28, 37, 34, 0.16);
   --font-sans: 'IBM Plex Sans Variable', 'Aptos', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', 'Cascadia Code', Consolas, monospace;
 }
@@ -78,14 +78,14 @@ p {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(245, 238, 227, 0.14);
+  background: rgba(28, 37, 34, 0.14);
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(245, 238, 227, 0.26);
+  background-color: rgba(28, 37, 34, 0.26);
 }
 
 .btn-primary,
@@ -120,14 +120,14 @@ p {
   min-height: 34px;
   padding: 6px 12px;
   border: 1px solid var(--border);
-  background: rgba(245, 238, 227, 0.03);
+  background: rgba(28, 37, 34, 0.03);
   color: var(--text-secondary);
 }
 
 .btn-ghost:hover {
   border-color: var(--border-strong);
   color: var(--text);
-  background: rgba(245, 238, 227, 0.06);
+  background: rgba(28, 37, 34, 0.06);
 }
 
 .icon-btn {
@@ -142,7 +142,7 @@ p {
 }
 
 .icon-btn:hover {
-  background: rgba(245, 238, 227, 0.07);
+  background: rgba(28, 37, 34, 0.07);
   color: var(--text);
 }
 
@@ -191,7 +191,7 @@ p {
 
 .dot.warn {
   background: var(--warning);
-  box-shadow: 0 0 0 3px rgba(246, 193, 91, 0.14);
+  box-shadow: 0 0 0 3px rgba(169, 116, 16, 0.16);
 }
 
 @keyframes dot-pulse {
