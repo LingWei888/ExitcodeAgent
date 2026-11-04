@@ -1,0 +1,14 @@
+{
+  "name": "@exitcode/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.mjs",
+    "start": "node src/server.mjs",
+    "build": "node --check src/server.mjs && node --check src/vault.mjs && node --check src/files.mjs && node --check src/model.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

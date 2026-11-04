@@ -81,7 +81,7 @@ function saveKey(): void {
   else store.savedKeys.push(entry)
   if (!store.currentModelId) store.currentModelId = entry.id
   startNew()
-  notice.value = '已保存到本机浏览器。'
+  notice.value = '已保存到服务器。'
 }
 
 function removeKey(id: string): void {
@@ -116,7 +116,7 @@ async function runTest(): Promise<void> {
       <header class="settings-head">
         <div>
           <h2>模型与密钥</h2>
-          <p>密钥只保存在当前浏览器本机，请勿在公用电脑上使用。</p>
+          <p>密钥只保存在服务器，请勿在公用电脑上使用。</p>
         </div>
         <button class="icon-btn" type="button" aria-label="关闭设置" @click="store.showSettings = false">
           <X :size="18" />

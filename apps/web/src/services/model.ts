@@ -26,15 +26,6 @@ export function sessionToTurns(messages: Message[]): ModelTurn[] {
     .map((message) => ({ role: message.role, content: message.content }))
 }
 
-function stripSlash(url: string): string {
-  return url.trim().replace(/\/+$/, '')
-}
-
-function anthropicUrl(baseUrl: string): string {
-  const base = stripSlash(baseUrl)
-  return base.endsWith('/v1') ? `${base}/messages` : `${base}/v1/messages`
-}
-
 async function readError(response: Response): Promise<string> {
   try {
     const body = await response.json()
@@ -48,7 +39,7 @@ async function readError(response: Response): Promise<string> {
 
 export function toFriendlyError(error: unknown): string {
   if (error instanceof TypeError) {
-    return '网络请求失败：接口地址可能不可达，或目标服务没有允许浏览器跨域访问（CORS）。'
+    return '网络请求失败：请确认 ExitcodeAgent 服务端已经启动。'
   }
   if (error instanceof Error && error.message) return error.message
   return '请求失败，请检查模型设置。'
@@ -85,45 +76,17 @@ export async function* streamModel(
   turns: ModelTurn[],
   signal: AbortSignal
 ): AsyncGenerator<StreamEvent> {
-  const baseUrl = connection.baseUrl.trim() || providerDefaultUrl(connection.provider)
-  const headers: Record<string, string> = {
-    'content-type': 'application/json'
-  }
-  let url = ''
-  let body: Record<string, unknown>
-
-  if (connection.provider === 'anthropic') {
-    url = anthropicUrl(baseUrl)
-    headers['x-api-key'] = connection.apiKey
-    headers['anthropic-version'] = '2023-06-01'
-    headers['anthropic-dangerous-direct-browser-access'] = 'true'
-    body = {
-      model: connection.model,
-      max_tokens: 2048,
-      stream: true,
-      messages: turns.map((turn) => ({ role: turn.role, content: turn.content }))
-    }
-  } else {
-    url = `${stripSlash(baseUrl)}/chat/completions`
-    headers.authorization = `Bearer ${connection.apiKey}`
-    body = {
-      model: connection.model,
-      stream: true,
-      messages: turns.map((turn) => ({ role: turn.role, content: turn.content }))
-    }
-  }
-
-  const response = await fetch(url, {
+  const response = await fetch('/api/model/stream', {
     method: 'POST',
-    headers,
-    body: JSON.stringify(body),
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ connection, turns }),
     signal
   })
 
   if (!response.ok) {
     const detail = await readError(response)
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('认证失败：请检查 API Key 是否正确、是否有该模型的访问权限。')
+    if (response.status === 401) {
+      throw new Error('账号已锁定，请重新解锁。')
     }
     throw new Error(detail)
   }
@@ -171,32 +134,20 @@ export interface ConnectionTest {
 export async function testConnection(connection: SavedKey): Promise<ConnectionTest> {
   const started = performance.now()
   const signal = new AbortController().signal
-  const baseUrl = connection.baseUrl.trim() || providerDefaultUrl(connection.provider)
-  const headers: Record<string, string> = { 'content-type': 'application/json' }
-  let url = ''
-  let body: Record<string, unknown>
-
-  if (connection.provider === 'anthropic') {
-    url = anthropicUrl(baseUrl)
-    headers['x-api-key'] = connection.apiKey
-    headers['anthropic-version'] = '2023-06-01'
-    headers['anthropic-dangerous-direct-browser-access'] = 'true'
-    body = { model: connection.model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }
-  } else {
-    url = `${stripSlash(baseUrl)}/chat/completions`
-    headers.authorization = `Bearer ${connection.apiKey}`
-    body = { model: connection.model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }
-  }
-
   try {
-    const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal })
+    const response = await fetch('/api/model/test', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ connection }),
+      signal
+    })
     const latencyMs = Math.round(performance.now() - started)
     if (response.ok) {
       return { ok: true, message: '连接成功，密钥可用。', latencyMs }
     }
     const detail = await readError(response)
-    if (response.status === 401 || response.status === 403) {
-      return { ok: false, message: '认证失败：请检查 API Key。', latencyMs }
+    if (response.status === 401) {
+      return { ok: false, message: '账号已锁定，请重新解锁。', latencyMs }
     }
     return { ok: false, message: detail, latencyMs }
   } catch (error) {

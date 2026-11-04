@@ -129,11 +129,11 @@ function commitSession(): void {
     <div class="sidebar-foot">
       <div class="foot-row">
         <span class="dot"></span>
-        <span>本地直连运行</span>
+        <span>服务器运行</span>
       </div>
       <div class="foot-row muted">
         <span>会话数据</span>
-        <strong>本机保存</strong>
+        <strong>服务器保存</strong>
       </div>
     </div>
   </aside>

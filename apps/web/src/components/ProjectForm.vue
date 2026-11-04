@@ -1,28 +1,24 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Check, FolderPlus, FolderOpen, RefreshCcw, X } from 'lucide-vue-next'
+import { Check, FolderPlus, FolderOpen, X } from 'lucide-vue-next'
 import { createProject, store } from '../store'
-import { isDirectoryPickerSupported, pickProjectDirectory, saveDirectoryHandle } from '../services/directory'
-import type { FileSystemDirectoryHandle } from '../types'
+import ServerDirectoryPicker from './ServerDirectoryPicker.vue'
 
 const name = ref('')
 const description = ref('')
-const directoryName = ref('')
-const directoryHandle = ref<FileSystemDirectoryHandle | null>(null)
+const directoryPath = ref('')
+const pickerOpen = ref(false)
 const error = ref('')
 const busy = ref(false)
-const supported = isDirectoryPickerSupported()
 
-async function chooseDirectory(): Promise<void> {
-  if (!supported) return
+function chooseDirectory(): void {
   error.value = ''
-  try {
-    const picked = await pickProjectDirectory()
-    directoryName.value = picked.name
-    directoryHandle.value = picked.handle
-  } catch (cause) {
-    if (cause instanceof Error && cause.name !== 'AbortError') error.value = cause.message
-  }
+  pickerOpen.value = true
+}
+
+function handleSelect(path: string): void {
+  directoryPath.value = path
+  pickerOpen.value = false
 }
 
 async function create(): Promise<void> {
@@ -31,14 +27,7 @@ async function create(): Promise<void> {
     return
   }
   busy.value = true
-  const project = createProject(name.value, description.value, directoryName.value || undefined)
-  if (directoryHandle.value) {
-    try {
-      await saveDirectoryHandle(project.id, directoryHandle.value)
-    } catch {
-      // Directory handle could not be persisted; the project still exists.
-    }
-  }
+  createProject(name.value, description.value, directoryPath.value || undefined)
   store.showProjectForm = false
 }
 </script>
@@ -49,7 +38,7 @@ async function create(): Promise<void> {
       <header class="dialog-head">
         <div>
           <h2>新建项目</h2>
-          <p>项目数据记录在本机，可选择服务器目录用于查看工作区文件。</p>
+          <p>项目数据记录在服务器，可选择服务器目录作为工作区。</p>
         </div>
         <button class="icon-btn" type="button" aria-label="关闭" @click="store.showProjectForm = false">
           <X :size="18" />
@@ -69,13 +58,11 @@ async function create(): Promise<void> {
 
         <div class="form-field">
           <span>服务器目录</span>
-          <button class="dir-picker" :class="{ chosen: directoryName }" type="button" :disabled="!supported" @click="chooseDirectory">
-            <FolderOpen v-if="!directoryName" :size="17" />
+          <button class="dir-picker" :class="{ chosen: directoryPath }" type="button" @click="chooseDirectory">
+            <FolderOpen v-if="!directoryPath" :size="17" />
             <Check v-else :size="17" />
-            <span>{{ directoryName || '选择目录' }}</span>
-            <RefreshCcw v-if="directoryName" class="reload" :size="14" />
+            <span>{{ directoryPath || '选择服务器目录' }}</span>
           </button>
-          <small v-if="!supported" class="dir-note">当前浏览器不支持选择目录</small>
         </div>
 
         <p v-if="error" class="form-error">{{ error }}</p>
@@ -88,6 +75,13 @@ async function create(): Promise<void> {
         </div>
       </form>
     </div>
+
+    <ServerDirectoryPicker
+      v-if="pickerOpen"
+      :current-path="directoryPath || undefined"
+      @select="handleSelect"
+      @close="pickerOpen = false"
+    />
   </div>
 </template>
 
@@ -163,15 +157,10 @@ async function create(): Promise<void> {
   text-align: left;
 }
 
-.dir-picker:hover:not(:disabled) {
+.dir-picker:hover {
   border-color: var(--accent);
   color: var(--text);
   background: var(--accent-soft);
-}
-
-.dir-picker:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
 }
 
 .dir-picker.chosen {
@@ -179,15 +168,6 @@ async function create(): Promise<void> {
   border-color: rgba(15, 133, 118, 0.35);
   color: var(--teal);
   background: var(--teal-soft);
-}
-
-.reload {
-  margin-left: auto;
-}
-
-.dir-note {
-  color: var(--text-muted);
-  font-size: 11px;
 }
 
 .form-error {

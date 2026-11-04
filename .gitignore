@@ -27,3 +27,6 @@ pnpm store cache
 
 TypeScript build cache
 *.tsbuildinfo
+
+# Server data
+apps/api/data/

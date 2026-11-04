@@ -14,17 +14,10 @@ import {
   Zap
 } from 'lucide-vue-next'
 import { currentConnection, currentProject, currentSession, store } from '../store'
-import {
-  ensureReadPermission,
-  formatSize,
-  getDirectoryHandle,
-  isDirectoryPickerSupported,
-  listDirectory,
-  pickProjectDirectory,
-  saveDirectoryHandle
-} from '../services/directory'
+import { formatSize, listDirectory } from '../services/directory'
 import type { DirectoryEntry } from '../services/directory'
 import type { Session, ToolCall } from '../types'
+import ServerDirectoryPicker from './ServerDirectoryPicker.vue'
 
 const session = computed<Session | null>(() => currentSession())
 const project = computed(() => currentProject())
@@ -69,7 +62,7 @@ const files = ref<DirectoryEntry[]>([])
 const directoryName = ref('')
 const dirMessage = ref('')
 const dirBusy = ref(false)
-const dirSupported = isDirectoryPickerSupported()
+const pickerOpen = ref(false)
 
 async function refreshDirectory(): Promise<void> {
   const current = project.value
@@ -77,49 +70,35 @@ async function refreshDirectory(): Promise<void> {
   dirMessage.value = ''
   directoryName.value = current?.directoryName ?? ''
   if (!current) return
-  if (!dirSupported) {
-    dirMessage.value = '当前浏览器不支持读取目录，请使用 Chrome 或 Edge。'
+  if (!current.directoryName) {
+    dirMessage.value = '这个项目还没有关联服务器目录。'
     return
   }
   dirBusy.value = true
   try {
-    const handle = await getDirectoryHandle(current.id)
-    if (!handle) {
-      dirMessage.value = current.directoryName ? '目录授权已失效，需要重新选择。' : '还没有关联目录。'
-      return
-    }
-    const permitted = await ensureReadPermission(handle)
-    if (permitted !== 'granted') {
-      dirMessage.value = '需要重新授予目录读取权限。'
-      return
-    }
-    directoryName.value = current.directoryName || handle.name
-    files.value = await listDirectory(handle)
+    const listing = await listDirectory(current.directoryName)
+    directoryName.value = listing.path
+    files.value = listing.entries.slice(0, 40)
     if (!files.value.length) dirMessage.value = '目录是空的。'
-  } catch {
+  } catch (cause) {
     files.value = []
-    dirMessage.value = '读取目录失败，可以重新选择。'
+    dirMessage.value = cause instanceof Error ? cause.message : '读取服务器目录失败。'
   } finally {
     dirBusy.value = false
   }
 }
 
-async function chooseDirectory(): Promise<void> {
-  if (!dirSupported || dirBusy.value) return
+function chooseDirectory(): void {
+  pickerOpen.value = true
+}
+
+function handleDirectorySelect(path: string): void {
   const current = project.value
   if (!current) return
-  try {
-    const picked = await pickProjectDirectory()
-    await saveDirectoryHandle(current.id, picked.handle)
-    current.directoryName = picked.name
-    current.directoryPickedAt = new Date().toISOString()
-    await refreshDirectory()
-  } catch (cause) {
-    if (cause instanceof Error && cause.name !== 'AbortError') {
-      dirMessage.value = cause.message || '选择目录失败。'
-      directoryName.value = current.directoryName ?? ''
-    }
-  }
+  current.directoryName = path
+  current.directoryPickedAt = new Date().toISOString()
+  pickerOpen.value = false
+  void refreshDirectory()
 }
 
 onMounted(refreshDirectory)
@@ -143,7 +122,7 @@ watch(() => store.currentProjectId, refreshDirectory)
         <div class="section-title">
           <FolderOpen :size="14" />
           <span>项目目录</span>
-          <span v-if="project?.directoryName" class="count">{{ project.directoryName }}</span>
+          <span v-if="project?.directoryName" class="count">服务器</span>
         </div>
 
         <div v-if="project" class="dir-card">
@@ -153,7 +132,7 @@ watch(() => store.currentProjectId, refreshDirectory)
               <small>{{ project.description || '没有描述' }}</small>
             </div>
             <button
-              v-if="project.directoryName && dirSupported"
+              v-if="project.directoryName"
               class="refresh-btn"
               type="button"
               :disabled="dirBusy"
@@ -166,32 +145,30 @@ watch(() => store.currentProjectId, refreshDirectory)
           </div>
 
           <div class="dir-actions">
-            <button class="pick-btn" type="button" :disabled="!dirSupported || dirBusy" @click="chooseDirectory">
+            <button class="pick-btn" type="button" :disabled="dirBusy" @click="chooseDirectory">
               <FolderPlus :size="14" />
               {{ project.directoryName ? '更换目录' : '选择服务器目录' }}
             </button>
           </div>
 
-          <p v-if="project.directoryName" class="dir-name">
+          <p v-if="directoryName" class="dir-name">
             <Folder :size="13" />
-            {{ directoryName || project.directoryName }}
+            {{ directoryName }}
           </p>
           <p v-if="dirMessage" class="dir-message">{{ dirMessage }}</p>
 
           <div v-if="files.length" class="dir-list">
-            <div v-for="entry in files.slice(0, 24)" :key="`${entry.kind}-${entry.name}`" class="dir-entry">
+            <div v-for="entry in files" :key="entry.path" class="dir-entry">
               <File v-if="entry.kind === 'file'" :size="13" />
               <Folder v-else :size="13" />
               <span class="entry-name">{{ entry.name }}</span>
               <small v-if="entry.kind === 'file'">{{ formatSize(entry.size) }}</small>
             </div>
-            <div v-if="files.length > 24" class="dir-more">还有 {{ files.length - 24 }} 项未显示</div>
+            <div v-if="files.length >= 40" class="dir-more">只显示前 40 项</div>
           </div>
-
-          <p v-if="!dirSupported" class="dir-message">需要 Chrome 或 Edge 才能选择并读取本地目录。</p>
         </div>
 
-        <div v-else class="empty-block">先选择或创建一个项目，再关联它的目录。</div>
+        <div v-else class="empty-block">先选择或创建一个项目，再关联它的服务器目录。</div>
       </section>
 
       <section class="drawer-section">
@@ -245,7 +222,7 @@ watch(() => store.currentProjectId, refreshDirectory)
         <div class="section-title"><Bot :size="14" /><span>模型连接</span></div>
         <div v-if="connection" class="model-card">
           <div class="model-card-head">
-            <span class="status-pill online">直连</span>
+            <span class="status-pill online">服务器转发</span>
             <strong>{{ connection.label }}</strong>
           </div>
           <div class="model-card-row">
@@ -262,11 +239,18 @@ watch(() => store.currentProjectId, refreshDirectory)
             <span class="status-pill">未配置</span>
             <strong>还没有模型接入</strong>
           </div>
-          <p class="empty-connect">密钥保存在本机，配置后即可直连模型。</p>
+          <p class="empty-connect">密钥由服务器保管，配置后即可使用。</p>
           <button class="connect-btn" type="button" @click="store.showSettings = true">添加模型</button>
         </div>
       </section>
     </div>
+
+    <ServerDirectoryPicker
+      v-if="pickerOpen"
+      :current-path="project?.directoryName || undefined"
+      @select="handleDirectorySelect"
+      @close="pickerOpen = false"
+    />
   </aside>
 </template>
 
@@ -330,10 +314,6 @@ watch(() => store.currentProjectId, refreshDirectory)
 }
 
 .section-title .count {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 150px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

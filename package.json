@@ -2,8 +2,12 @@
   "name": "exitcode-agent",
   "private": true,
   "scripts": {
+    "dev": "pnpm --recursive --parallel run dev",
     "dev:web": "pnpm --filter @exitcode/web dev",
+    "build": "pnpm --recursive run build",
     "build:web": "pnpm --filter @exitcode/web build",
+    "dev:api": "pnpm --filter @exitcode/api dev",
+    "start": "pnpm --filter @exitcode/api start",
     "preview:web": "pnpm --filter @exitcode/web preview"
   },
   "packageManager": "pnpm@11.25.0",

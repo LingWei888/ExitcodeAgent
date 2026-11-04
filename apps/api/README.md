@@ -1,13 +1,33 @@
-# ExitcodeAgent API（待实现）
+# ExitcodeAgent API
 
-此目录预留给 NestJS 后端服务，当前阶段仅完成前端原型，后端尚未编码。
+Node.js 内置 `node:http` 实现的单进程服务，无第三方依赖，负责：
 
-规划中的服务职责：
+- 唯一账号的首次创建、口令解锁和锁定
+- 项目、会话、模型密钥的加密落盘（PBKDF2 + AES-GCM）
+- 服务器文件系统目录浏览
+- 模型请求的服务器端转发（Claude / OpenAI 兼容 / Ollama）
+- 生产模式下托管 `apps/web/dist` 静态文件
 
-- 认证、用户、团队、项目、会话的元数据管理（PostgreSQL + Prisma）
-- 会话状态与限流（Redis，预留）
-- 模型适配层接入：Anthropic / OpenAI 兼容 / Ollama
-- Agent 工具调用循环与沙箱管理器（dockerode → Docker API）
-- 会话沙箱的创建、执行、超时回收
+## 接口
 
-技术选型以根目录 `README.md` 的架构总览为准，后续实现时再落地具体代码。
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/state` | 是否已有账号、当前是否有解锁会话 |
+| `POST` | `/api/setup` | 首次创建账号，返回会话令牌与初始数据 |
+| `POST` | `/api/unlock` | 口令解锁，返回会话令牌与加密数据 |
+| `POST` | `/api/lock` | 清除当前会话令牌 |
+| `GET` | `/api/vault` | 读取当前服务器数据（需令牌） |
+| `PUT` | `/api/vault` | 保存当前服务器数据（需令牌） |
+| `POST` | `/api/workspace/list` | 浏览服务器目录（需令牌） |
+| `POST` | `/api/model/stream` | 流式转发模型请求（需令牌） |
+| `POST` | `/api/model/test` | 测试模型连接（需令牌） |
+
+会话令牌放在 `Authorization: Bearer <token>` 请求头中，只保存在服务器内存。
+
+## 配置
+
+- `PORT`：默认 `8787`
+- `HOST`：默认 `0.0.0.0`
+- `EXITCODE_DATA_DIR`：加密数据文件目录，默认 `apps/api/data`
+- `EXITCODE_WORKSPACE_ROOT`：服务器工作区根目录；设置后目录浏览不能越出该目录
+- 生产静态目录固定为 `../web/dist`（相对 `apps/api/src`）

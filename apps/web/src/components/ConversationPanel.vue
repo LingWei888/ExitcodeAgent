@@ -186,7 +186,7 @@ function suggest(text: string): void {
           <span class="dot" :class="{ pulse: isRunning, warn: !connection }"></span>
           <span>{{ isRunning ? '生成中' : connection?.label ?? '未配置模型' }}</span>
           <span class="divider"></span>
-          <span class="demo-note">数据加密保存在本机</span>
+          <span class="save-note">数据加密保存在服务器</span>
         </div>
       </div>
     </footer>
@@ -402,7 +402,7 @@ function suggest(text: string): void {
   background: var(--border);
 }
 
-.demo-note {
+.save-note {
   color: var(--text-muted);
 }
 </style>

@@ -34,7 +34,7 @@ function selectModel(id: string): void {
       </button>
       <span class="logo-mark"><Terminal :size="17" /></span>
       <span class="brand">ExitcodeAgent</span>
-      <span class="env-chip"><span class="dot" :class="{ pulse: Boolean(activeConnection), warn: !activeConnection }"></span>本地加密存储</span>
+      <span class="env-chip"><span class="dot" :class="{ pulse: Boolean(activeConnection), warn: !activeConnection }"></span>服务器加密存储</span>
     </div>
 
     <div class="right">
@@ -78,7 +78,7 @@ function selectModel(id: string): void {
       <div class="menu-anchor user-menu">
         <button class="user-trigger" type="button" @click="userMenuOpen = !userMenuOpen">
           <span class="avatar">{{ store.user?.name?.slice(0, 1) ?? '您' }}</span>
-          <span class="user-name">{{ store.user?.name ?? '演示用户' }}</span>
+          <span class="user-name">{{ store.user?.name ?? '服务器用户' }}</span>
           <ChevronDown :size="14" />
         </button>
         <div v-if="userMenuOpen" class="menu-pop">

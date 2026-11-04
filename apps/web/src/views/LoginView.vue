@@ -13,7 +13,11 @@ const password = ref('')
 const confirmPassword = ref('')
 
 onMounted(async () => {
-  hasAccount.value = await hasLocalAccount()
+  try {
+    hasAccount.value = await hasLocalAccount()
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : '无法连接服务端。'
+  }
 })
 
 async function submit(): Promise<void> {
@@ -22,7 +26,7 @@ async function submit(): Promise<void> {
 
   if (!hasAccount.value) {
     if (!name.value.trim()) {
-      error.value = '请填写本机账号名称。'
+      error.value = '请填写服务器账号名称。'
       return
     }
     if (password.value.length < 8) {
@@ -67,15 +71,15 @@ async function submit(): Promise<void> {
         <span class="brand-name">ExitcodeAgent</span>
       </div>
 
-      <p class="eyebrow">本地 加密 工作台</p>
-      <h1>一份数据，一个账号，全部留在本机</h1>
-      <p class="lead">项目、会话、模型密钥和口令都由本机加密保管。解锁后即可直连 Claude、DeepSeek 或本地 Ollama。</p>
+      <p class="eyebrow">服务器 加密 工作台</p>
+      <h1>一份数据，一个账号，全部留在服务器</h1>
+      <p class="lead">项目、会话、模型密钥和口令都由服务器加密保管。解锁后由服务器转发 Claude、DeepSeek 或 Ollama 请求。</p>
 
       <div class="status-matrix">
         <div class="status-cell">
           <span class="status-icon"><ShieldCheck :size="16" /></span>
           <div>
-            <span class="status-label">本地存储</span>
+            <span class="status-label">服务器存储</span>
             <strong><span class="dot"></span> 加密保存</strong>
           </div>
         </div>
@@ -90,7 +94,7 @@ async function submit(): Promise<void> {
           <span class="status-icon"><KeyRound :size="16" /></span>
           <div>
             <span class="status-label">历史记录</span>
-            <strong>本机保留</strong>
+            <strong>服务器保留</strong>
           </div>
         </div>
         <div class="status-cell">
@@ -107,7 +111,7 @@ async function submit(): Promise<void> {
       <div class="form-wrap">
         <template v-if="!hasAccount">
           <h2>首次设置</h2>
-          <p class="form-hint">本机只会创建一个账号，创建后不再提供注册入口。</p>
+          <p class="form-hint">服务器只会创建一个账号，创建后不再提供注册入口。</p>
 
           <form class="login-form" @submit.prevent="submit">
             <label class="form-field">
@@ -124,14 +128,14 @@ async function submit(): Promise<void> {
             </label>
             <p v-if="error" class="form-error">{{ error }}</p>
             <button class="btn-primary submit-btn" type="submit" :disabled="busy">
-              {{ busy ? '创建中' : '创建本机账号' }}
+              {{ busy ? '创建中' : '创建服务器账号' }}
             </button>
           </form>
         </template>
 
         <template v-else>
-          <h2>解锁本机工作台</h2>
-          <p class="form-hint">输入本机账号口令解锁加密数据。</p>
+          <h2>解锁服务器工作台</h2>
+          <p class="form-hint">输入服务器账号口令解锁加密数据。</p>
 
           <form class="login-form" @submit.prevent="submit">
             <label class="form-field">

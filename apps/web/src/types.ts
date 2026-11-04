@@ -10,12 +10,6 @@ export type ToolKind =
 
 export type ToolState = 'pending' | 'running' | 'done'
 
-export type FileSystemDirectoryHandle = globalThis.FileSystemDirectoryHandle & {
-  queryPermission(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>
-  requestPermission(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>
-  entries(): AsyncIterableIterator<[string, FileSystemHandle]>
-}
-
 export interface ToolCall {
   id: string
   kind: ToolKind
