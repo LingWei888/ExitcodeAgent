@@ -68,5 +68,5 @@ export interface SavedKey {
   label: string
   baseUrl: string
   model: string
-  maskedKey: string
+  apiKey: string
 }

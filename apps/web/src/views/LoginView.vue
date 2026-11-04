@@ -38,36 +38,36 @@ onMounted(() => {
       </div>
 
       <p class="eyebrow">自托管 智能体 协作</p>
-      <h1>让智能体在隔离沙箱里把活干完</h1>
-      <p class="lead">对话驱动的工作台：智能体负责读代码、执行命令、改文件和提交，你负责确认方向。</p>
+      <h1>对话驱动的工作台，直连你自己的模型</h1>
+      <p class="lead">管理项目与会话，用自带的 API Key 直连 Claude、DeepSeek 或本地 Ollama，密钥只保存在本机浏览器。</p>
 
       <div class="status-matrix">
         <div class="status-cell">
           <span class="status-icon"><Cpu :size="16" /></span>
           <div>
-            <span class="status-label">沙箱节点</span>
-            <strong><span class="dot"></span> 在线</strong>
+            <span class="status-label">会话数据</span>
+            <strong><span class="dot"></span> 本机保存</strong>
           </div>
         </div>
         <div class="status-cell">
           <span class="status-icon"><KeyRound :size="16" /></span>
           <div>
-            <span class="status-label">模型密钥</span>
-            <strong>1 个自管</strong>
+            <span class="status-label">模型接入</span>
+            <strong>直连可用</strong>
           </div>
         </div>
         <div class="status-cell">
           <span class="status-icon"><ShieldCheck :size="16" /></span>
           <div>
-            <span class="status-label">会话隔离</span>
-            <strong>容器级</strong>
+            <span class="status-label">历史记录</span>
+            <strong>本地保留</strong>
           </div>
         </div>
         <div class="status-cell">
           <span class="status-icon"><Boxes :size="16" /></span>
           <div>
             <span class="status-label">项目空间</span>
-            <strong>2 个挂载</strong>
+            <strong>2 个已建</strong>
           </div>
         </div>
       </div>

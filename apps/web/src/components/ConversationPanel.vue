@@ -1,19 +1,23 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ArrowUp, GitBranch, Square, Terminal } from 'lucide-vue-next'
-import { currentSession, store } from '../store'
-import { isAgentRunning, runAgentReply, stopAgentReply } from '../mock/agent'
+import { ArrowUp, GitBranch, Settings2, Square, Terminal } from 'lucide-vue-next'
+import { appendUserMessage, createAssistantMessage, currentConnection, currentSession, store } from '../store'
+import { sessionToTurns, streamModel, toFriendlyError } from '../services/model'
 import MessageItem from './MessageItem.vue'
 
 const draft = ref('')
 const listEl = ref<HTMLElement | null>(null)
 const textareaEl = ref<HTMLTextAreaElement | null>(null)
+const runState = ref<'idle' | 'running'>('idle')
+const inputError = ref('')
+const controller = ref<AbortController | null>(null)
+const activeMessageId = ref('')
 
 const session = computed(() => currentSession())
 const messages = computed(() => session.value.messages)
-const isRunning = computed(() => isAgentRunning() || messages.value.some((m) => m.status === 'streaming'))
-const activeMessage = computed(() => [...messages.value].reverse().find((m) => m.status === 'streaming'))
-const currentModel = computed(() => store.models.find((m) => m.id === store.currentModelId))
+const connection = computed(() => currentConnection())
+const isRunning = computed(() => runState.value === 'running')
+const activeMessage = computed(() => messages.value.find((m) => m.id === activeMessageId.value))
 
 async function scrollToBottom(): Promise<void> {
   await nextTick()
@@ -30,6 +34,7 @@ watch(
   () => session.value.id,
   () => {
     draft.value = ''
+    inputError.value = ''
     scrollToBottom()
   }
 )
@@ -41,23 +46,71 @@ function autosize(): void {
   el.style.height = `${Math.min(el.scrollHeight, 180)}px`
 }
 
-function send(): void {
+async function send(): Promise<void> {
   const text = draft.value.trim()
   if (!text || isRunning.value) return
+  if (!connection.value) {
+    inputError.value = '还没有模型接入，先到右上角设置添加 API Key。'
+    store.showSettings = true
+    return
+  }
+
+  inputError.value = ''
   draft.value = ''
   autosize()
-  runAgentReply(text)
+  appendUserMessage(text)
+  const message = createAssistantMessage()
+  activeMessageId.value = message.id
+  const turns = sessionToTurns(session.value.messages)
+
+  const aborter = new AbortController()
+  controller.value = aborter
+  runState.value = 'running'
+
+  let inputTokens = 0
+  let outputTokens = 0
+  try {
+    for await (const event of streamModel(connection.value, turns, aborter.signal)) {
+      if (event.text) message.content += event.text
+      if (event.usage) {
+        inputTokens = event.usage.input
+        outputTokens = event.usage.output
+      }
+    }
+    if (inputTokens || outputTokens) {
+      session.value.runTokens.input += inputTokens
+      session.value.runTokens.output += outputTokens
+    }
+    message.status = 'done'
+  } catch (error) {
+    if (aborter.signal.aborted) {
+      if (!message.content) message.content = '已停止。'
+      message.status = 'done'
+    } else {
+      message.status = 'error'
+      const detail = toFriendlyError(error)
+      message.content = message.content ? `${message.content}\n\n${detail}` : detail
+    }
+  } finally {
+    runState.value = 'idle'
+    controller.value = null
+    activeMessageId.value = ''
+  }
 }
 
 function stop(): void {
-  const message = activeMessage.value
-  if (message) stopAgentReply(message.id)
+  controller.value?.abort()
+}
+
+function openSettings(): void {
+  inputError.value = ''
+  store.showSettings = true
 }
 
 function suggest(text: string): void {
   draft.value = text
   autosize()
-  send()
+  void send()
 }
 </script>
 
@@ -68,7 +121,7 @@ function suggest(text: string): void {
         <h1>{{ session.title }}</h1>
         <div class="conv-meta">
           <span class="chip"><GitBranch :size="12" /> {{ session.branch }}</span>
-          <span class="chip">{{ currentModel?.label }}</span>
+          <span class="chip">{{ connection?.label ?? '未配置模型' }}</span>
           <span class="msg-count">{{ messages.length }} 条消息</span>
         </div>
       </div>
@@ -81,17 +134,21 @@ function suggest(text: string): void {
         <div v-if="!messages.length" class="empty-state">
           <div class="empty-icon"><Terminal :size="22" /></div>
           <h2>{{ session.title }}</h2>
-          <p>描述你想让智能体做的事，它会在这个项目的沙箱里完成。</p>
+          <p>描述你想让模型完成的任务，它会直接在当前会话里给出答案。</p>
           <div class="suggestions">
-            <button type="button" @click="suggest('先看一下 README，确认项目结构')">先看一下 README，确认项目结构</button>
-            <button type="button" @click="suggest('检查一下构建是否通过')">检查一下构建是否通过</button>
-            <button type="button" @click="suggest('看看当前工作区状态')">看看当前工作区状态</button>
+            <button type="button" @click="suggest('梳理一下这个项目接下来该做什么')">梳理一下这个项目接下来该做什么</button>
+            <button type="button" @click="suggest('把当前会话的要点总结给我')">把当前会话的要点总结给我</button>
+            <button type="button" @click="suggest('给这个平台想几个演示入口')">给这个平台想几个演示入口</button>
           </div>
         </div>
       </div>
     </div>
 
     <footer class="composer-wrap">
+      <p v-if="inputError" class="composer-error">
+        {{ inputError }}
+        <button type="button" @click="openSettings">去设置</button>
+      </p>
       <div class="composer">
         <div class="composer-inner">
           <textarea
@@ -99,7 +156,7 @@ function suggest(text: string): void {
             v-model="draft"
             class="composer-input"
             rows="1"
-            placeholder="描述你想让智能体完成的任务…"
+            placeholder="描述你想让模型完成的任务…"
             @input="autosize"
             @keydown.enter.prevent="send"
           ></textarea>
@@ -125,10 +182,10 @@ function suggest(text: string): void {
           </button>
         </div>
         <div class="composer-foot">
-          <span class="dot" :class="{ pulse: isRunning, warn: false }"></span>
-          <span>{{ isRunning ? '代理运行中' : '空闲' }}</span>
+          <span class="dot" :class="{ pulse: isRunning, warn: !connection }"></span>
+          <span>{{ isRunning ? '生成中' : connection?.label ?? '未配置模型' }}</span>
           <span class="divider"></span>
-          <span class="demo-note">本地演示，假模型</span>
+          <span class="demo-note">本地直连，密钥存于本机浏览器</span>
         </div>
       </div>
     </footer>
@@ -237,7 +294,7 @@ function suggest(text: string): void {
 }
 
 .suggestions button:hover {
-  border-color: rgba(255, 106, 43, 0.4);
+  border-color: var(--accent);
   color: var(--text);
   background: var(--accent-soft);
 }
@@ -245,6 +302,26 @@ function suggest(text: string): void {
 .composer-wrap {
   flex: none;
   padding: 0 22px 18px;
+}
+
+.composer-error {
+  max-width: 860px;
+  margin: 0 auto 8px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.composer-error button {
+  margin-left: 6px;
+  padding: 2px 6px;
+  border: 1px solid rgba(217, 67, 67, 0.35);
+  border-radius: 3px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.composer-error button:hover {
+  background: rgba(217, 67, 67, 0.08);
 }
 
 .composer {
@@ -304,7 +381,7 @@ function suggest(text: string): void {
 
 .send-btn.stop {
   background: var(--bg-raised);
-  border: 1px solid rgba(255, 92, 92, 0.4);
+  border: 1px solid rgba(217, 67, 67, 0.4);
   color: var(--danger);
 }
 

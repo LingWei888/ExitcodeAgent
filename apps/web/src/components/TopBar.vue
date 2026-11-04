@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { Bot, ChevronDown, LogOut, PanelLeftOpen, PanelRightOpen, Settings, Terminal } from 'lucide-vue-next'
-import { logout, store } from '../store'
+import { currentConnection, logout, store } from '../store'
 
 const modelMenuOpen = ref(false)
 const userMenuOpen = ref(false)
@@ -14,6 +14,11 @@ function closeMenus(event: MouseEvent): void {
 
 document.addEventListener('click', closeMenus)
 onBeforeUnmount(() => document.removeEventListener('click', closeMenus))
+
+const modelOptions = computed(() =>
+  store.savedKeys.map((key) => ({ id: key.id, provider: key.provider, label: key.label, model: key.model }))
+)
+const activeConnection = computed(() => currentConnection())
 
 function selectModel(id: string): void {
   store.currentModelId = id
@@ -29,32 +34,38 @@ function selectModel(id: string): void {
       </button>
       <span class="logo-mark"><Terminal :size="17" /></span>
       <span class="brand">ExitcodeAgent</span>
-      <span class="env-chip"><span class="dot pulse"></span>演示模式</span>
+      <span class="env-chip"><span class="dot" :class="{ pulse: Boolean(activeConnection), warn: !activeConnection }"></span>纯前端直连</span>
     </div>
 
     <div class="right">
       <div class="menu-anchor model-menu">
         <button class="model-trigger" type="button" @click="modelMenuOpen = !modelMenuOpen">
           <Bot :size="15" />
-          <span class="model-label">{{ store.models.find((m) => m.id === store.currentModelId)?.label ?? '模型' }}</span>
+          <span class="model-label">{{ activeConnection?.label ?? '未配置模型' }}</span>
           <ChevronDown :size="14" />
         </button>
         <div v-if="modelMenuOpen" class="menu-pop model-pop">
           <div class="menu-title">会话模型</div>
-          <button
-            v-for="model in store.models"
-            :key="model.id"
-            class="menu-item"
-            :class="{ active: model.id === store.currentModelId }"
-            type="button"
-            @click="selectModel(model.id)"
-          >
-            <span class="provider-badge" :class="model.provider">{{ model.provider }}</span>
-            <span class="menu-item-copy">
-              <strong>{{ model.label }}</strong>
-              <small>{{ model.model }}</small>
-            </span>
-          </button>
+          <template v-if="modelOptions.length">
+            <button
+              v-for="model in modelOptions"
+              :key="model.id"
+              class="menu-item"
+              :class="{ active: model.id === store.currentModelId }"
+              type="button"
+              @click="selectModel(model.id)"
+            >
+              <span class="provider-badge" :class="model.provider">{{ model.provider }}</span>
+              <span class="menu-item-copy">
+                <strong>{{ model.label }}</strong>
+                <small>{{ model.model }}</small>
+              </span>
+            </button>
+          </template>
+          <div v-else class="empty-models">
+            <span>还没有模型接入</span>
+            <button type="button" @click="store.showSettings = true">添加 API Key</button>
+          </div>
         </div>
       </div>
 
@@ -188,6 +199,30 @@ function selectModel(id: string): void {
   font-weight: 700;
 }
 
+
+.empty-models {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.empty-models button {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+}
+
+.empty-models button:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
 .user-name {
   max-width: 110px;
   overflow: hidden;

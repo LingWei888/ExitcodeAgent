@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { KeyRound, Plus, Save, Trash2, Wifi, X, Zap } from 'lucide-vue-next'
+import { KeyRound, LoaderCircle, Plus, Save, Trash2, Wifi, X, Zap } from 'lucide-vue-next'
 import { store } from '../store'
+import { providerDefaultUrl, testConnection } from '../services/model'
 import type { ProviderId, SavedKey } from '../types'
 
 const form = reactive({
@@ -13,17 +14,13 @@ const form = reactive({
 })
 const editingId = ref<string | null>(null)
 const notice = ref('')
+const testing = ref(false)
+const testResult = ref<{ ok: boolean; message: string } | null>(null)
 
 const providerNames: Record<ProviderId, string> = {
   anthropic: 'Anthropic Claude',
   'openai-compatible': 'OpenAI 兼容',
   ollama: 'Ollama 本地'
-}
-
-const providerDefaults: Record<ProviderId, string> = {
-  anthropic: 'https://api.anthropic.com',
-  'openai-compatible': 'https://api.deepseek.com/v1',
-  ollama: 'http://localhost:11434/v1'
 }
 
 const saved = computed(() => store.savedKeys)
@@ -37,7 +34,7 @@ function maskKey(key: string): string {
 
 function selectPreset(provider: ProviderId): void {
   form.provider = provider
-  if (!form.baseUrl) form.baseUrl = providerDefaults[provider]
+  if (!form.baseUrl) form.baseUrl = providerDefaultUrl(provider)
 }
 
 function editKey(key: SavedKey): void {
@@ -48,6 +45,7 @@ function editKey(key: SavedKey): void {
   form.model = key.model
   form.apiKey = ''
   notice.value = ''
+  testResult.value = null
 }
 
 function startNew(): void {
@@ -57,41 +55,68 @@ function startNew(): void {
   form.apiKey = ''
   form.model = ''
   notice.value = ''
+  testResult.value = null
 }
 
 function saveKey(): void {
-  if (!form.label.trim() || !form.apiKey.trim() || !form.model.trim()) {
-    notice.value = '请至少填写名称、API Key 和模型名。'
+  if (!form.label.trim() || !form.model.trim()) {
+    notice.value = '请填写名称和模型名。'
+    return
+  }
+  const existing = editingId.value ? store.savedKeys.find((item) => item.id === editingId.value) : undefined
+  if (!form.apiKey.trim() && !existing) {
+    notice.value = '首次保存需要填写 API Key。'
     return
   }
   const entry: SavedKey = {
     id: editingId.value ?? `k-${Date.now()}`,
     provider: form.provider,
     label: form.label.trim(),
-    baseUrl: form.baseUrl.trim() || providerDefaults[form.provider],
+    baseUrl: form.baseUrl.trim() || providerDefaultUrl(form.provider),
     model: form.model.trim(),
-    maskedKey: maskKey(form.apiKey.trim())
+    apiKey: form.apiKey.trim() || existing?.apiKey || ''
   }
   const index = store.savedKeys.findIndex((item) => item.id === entry.id)
   if (index >= 0) store.savedKeys[index] = entry
   else store.savedKeys.push(entry)
-  notice.value = '已保存到本机演示存储。'
+  if (!store.currentModelId) store.currentModelId = entry.id
+  notice.value = '已保存到本机浏览器。'
   startNew()
 }
 
 function removeKey(id: string): void {
   store.savedKeys = store.savedKeys.filter((item) => item.id !== id)
+  if (store.currentModelId === id) store.currentModelId = store.savedKeys[0]?.id ?? ''
   if (editingId.value === id) startNew()
+}
+
+async function runTest(): Promise<void> {
+  if (!form.apiKey.trim() || !form.model.trim()) {
+    testResult.value = { ok: false, message: '测试前需要填写 API Key 和模型名。' }
+    return
+  }
+  testing.value = true
+  testResult.value = null
+  const result = await testConnection({
+    id: 'test',
+    provider: form.provider,
+    label: form.label.trim() || '测试接入',
+    baseUrl: form.baseUrl.trim() || providerDefaultUrl(form.provider),
+    model: form.model.trim(),
+    apiKey: form.apiKey.trim()
+  })
+  testResult.value = result
+  testing.value = false
 }
 </script>
 
 <template>
   <div class="settings-overlay" @click.self="store.showSettings = false">
-    <div class="settings-dialog" role="dialog" aria-label="模型设置">
+    <div class="settings-dialog" role="dialog" aria-label="模型与密钥设置">
       <header class="settings-head">
         <div>
           <h2>模型与密钥</h2>
-          <p>为会话选择可用的模型接入；密钥只在本机演示环境中做脱敏存储。</p>
+          <p>密钥只保存在当前浏览器本机，请勿在公用电脑上使用。</p>
         </div>
         <button class="icon-btn" type="button" aria-label="关闭设置" @click="store.showSettings = false">
           <X :size="18" />
@@ -101,7 +126,7 @@ function removeKey(id: string): void {
       <div class="settings-body">
         <section class="saved-section">
           <div class="section-head">
-            <span>已保存的密钥</span>
+            <span>已保存的接入</span>
             <button class="btn-ghost small" type="button" @click="startNew">
               <Plus :size="14" />
               新增
@@ -114,7 +139,7 @@ function removeKey(id: string): void {
               <div class="key-copy">
                 <strong>{{ key.label }}</strong>
                 <code>{{ key.model }}</code>
-                <small>{{ key.maskedKey }}</small>
+                <small>{{ maskKey(key.apiKey) }}</small>
               </div>
               <div class="key-actions">
                 <button class="icon-btn" type="button" aria-label="编辑" @click="editKey(key)"><Wifi :size="15" /></button>
@@ -122,7 +147,7 @@ function removeKey(id: string): void {
               </div>
             </div>
           </div>
-          <div v-else class="empty-keys">还没有保存的密钥，从右侧新增一个接入。</div>
+          <div v-else class="empty-keys">还没有模型接入，在右侧新增一个。</div>
         </section>
 
         <section class="form-section">
@@ -146,12 +171,18 @@ function removeKey(id: string): void {
 
             <label class="form-field">
               <span>接口地址</span>
-              <input v-model="form.baseUrl" class="field mono" type="text" :placeholder="providerDefaults[form.provider]" />
+              <input v-model="form.baseUrl" class="field mono" type="text" placeholder="粘贴接口地址" />
             </label>
 
             <label class="form-field">
               <span>API Key</span>
-              <input v-model="form.apiKey" class="field mono" type="password" placeholder="sk-…" autocomplete="off" />
+              <input
+                v-model="form.apiKey"
+                class="field mono"
+                type="password"
+                :placeholder="editingId ? '留空则保留原密钥' : 'sk-…'"
+                autocomplete="off"
+              />
             </label>
 
             <label class="form-field">
@@ -159,12 +190,20 @@ function removeKey(id: string): void {
               <input v-model="form.model" class="field mono" type="text" placeholder="deepseek-chat" />
             </label>
 
-            <p v-if="notice" class="form-notice">{{ notice }}</p>
+            <p v-if="notice" class="form-notice warn">{{ notice }}</p>
+            <p v-if="testResult" class="form-notice" :class="{ ok: testResult.ok }">
+              {{ testResult.ok ? '✓ ' : '' }}{{ testResult.message }}
+            </p>
 
             <div class="form-actions">
               <button class="btn-primary" type="submit">
                 <Save :size="15" />
                 保存接入
+              </button>
+              <button class="btn-ghost" type="button" :disabled="testing" @click="runTest">
+                <LoaderCircle v-if="testing" :size="15" class="spin" />
+                <Wifi v-else :size="15" />
+                {{ testing ? '测试中' : '测试连接' }}
               </button>
               <button v-if="editingId" class="btn-ghost" type="button" @click="startNew">取消编辑</button>
             </div>
@@ -191,7 +230,7 @@ function removeKey(id: string): void {
 .settings-dialog {
   display: flex;
   flex-direction: column;
-  width: min(880px, 100%);
+  width: min(920px, 100%);
   max-height: calc(100vh - 48px);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-m);
@@ -363,14 +402,33 @@ function removeKey(id: string): void {
 }
 
 .form-notice {
-  color: var(--teal);
+  color: var(--text-muted);
   font-size: 12px;
+}
+
+.form-notice.warn {
+  color: var(--warning);
+}
+
+.form-notice.ok {
+  color: var(--teal);
 }
 
 .form-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 4px;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 780px) {

@@ -119,11 +119,11 @@ function commitSession(): void {
     <div class="sidebar-foot">
       <div class="foot-row">
         <span class="dot"></span>
-        <span>本地沙箱演示</span>
+        <span>本地直连运行</span>
       </div>
       <div class="foot-row muted">
-        <span>会话隔离</span>
-        <strong>容器级</strong>
+        <span>会话数据</span>
+        <strong>本机保存</strong>
       </div>
     </div>
   </aside>

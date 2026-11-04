@@ -1,4 +1,4 @@
-import type { Project, Session, SavedKey } from '../types'
+import type { Project, Session } from '../types'
 
 export const demoProjects: Project[] = [
   {
@@ -62,7 +62,7 @@ export const demoSessions: Record<string, Session> = {
     runTokens: { input: 1832, output: 415 },
     filesChanged: [
       { path: 'apps/web/src/store.ts', kind: 'created', summary: '前端状态管理' },
-      { path: 'apps/web/src/mock/agent.ts', kind: 'created', summary: '模拟智能体引擎' }
+      { path: 'apps/web/src/services/model.ts', kind: 'created', summary: '真实模型直连服务' }
     ]
   },
   's-2': {
@@ -84,20 +84,3 @@ export const demoSessions: Record<string, Session> = {
     filesChanged: []
   }
 }
-
-export const modelPresets = [
-  { id: 'm-claude', provider: 'anthropic', label: 'Claude Sonnet', model: 'claude-sonnet-4' },
-  { id: 'm-deepseek', provider: 'openai-compatible', label: 'DeepSeek V3', model: 'deepseek-chat' },
-  { id: 'm-ollama', provider: 'ollama', label: 'Ollama 本地', model: 'qwen3:8b' }
-] as const
-
-export const savedKeys: SavedKey[] = [
-  {
-    id: 'k-1',
-    provider: 'openai-compatible',
-    label: 'DeepSeek 工作账号',
-    baseUrl: 'https://api.deepseek.com/v1',
-    model: 'deepseek-chat',
-    maskedKey: 'sk-ds••••••••••••••••••4f2a'
-  }
-]

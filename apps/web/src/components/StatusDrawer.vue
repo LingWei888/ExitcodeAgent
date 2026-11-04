@@ -10,7 +10,7 @@ import {
   X,
   Zap
 } from 'lucide-vue-next'
-import { currentSession, store } from '../store'
+import { currentConnection, currentSession, store } from '../store'
 import type { ToolCall } from '../types'
 
 const session = computed(() => currentSession())
@@ -28,7 +28,7 @@ const fileKinds: Record<string, string> = {
   deleted: '删除'
 }
 
-const currentModel = computed(() => store.models.find((m) => m.id === store.currentModelId))
+const connection = computed(() => currentConnection())
 </script>
 
 <template>
@@ -85,16 +85,22 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
 
       <section class="drawer-section">
         <div class="section-title"><Bot :size="14" /><span>模型连接</span></div>
-        <div class="model-card">
+        <div v-if="connection" class="model-card">
           <div class="model-card-head">
             <span class="dot"></span>
-            <strong>{{ currentModel?.label }}</strong>
-            <span class="status-pill">mock</span>
+            <strong>{{ connection.label }}</strong>
+            <span class="status-pill">已连接</span>
           </div>
-          <div class="model-card-row"><span>提供方</span><code>{{ currentModel?.provider }}</code></div>
-          <div class="model-card-row"><span>模型</span><code>{{ currentModel?.model }}</code></div>
-          <div class="model-card-row"><span>接入</span><span class="link-line">演示模拟器</span></div>
-          <div class="model-card-row"><span>分支</span><span class="link-line"><GitBranch :size="12" /> {{ session.branch }}</span></div>
+          <div class="model-card-row"><span>提供方</span><code>{{ connection.provider }}</code></div>
+          <div class="model-card-row"><span>模型</span><code>{{ connection.model }}</code></div>
+          <div class="model-card-row"><span>地址</span><span class="link-line">{{ connection.baseUrl }}</span></div>
+        </div>
+        <div v-else class="model-card empty">
+          <div class="model-card-head">
+            <span class="dot warn"></span>
+            <strong>未配置模型</strong>
+          </div>
+          <div class="empty-connect">还没有可用的模型接入。</div>
         </div>
       </section>
     </div>
@@ -352,6 +358,16 @@ const currentModel = computed(() => store.models.find((m) => m.id === store.curr
   font-size: 10px;
 }
 
+
+.model-card.empty {
+  background: rgba(169, 116, 16, 0.08);
+  border-color: rgba(169, 116, 16, 0.24);
+}
+
+.empty-connect {
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .model-card-row {
   display: flex;
   align-items: center;
