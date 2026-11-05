@@ -1,11 +1,25 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ArrowUp, FolderOpen, GitBranch, Settings2, Square, Terminal } from 'lucide-vue-next'
-import { appendUserMessage, createAssistantMessage, currentConnection, currentProject, currentSession, store } from '../store'
-import type { Message, Session, ToolCall } from '../types'
+import { ArrowUp, Eraser, FolderOpen, GitBranch, GitMerge, Settings2, Square, Terminal, X } from 'lucide-vue-next'
+import {
+  appendUserMessage,
+  clearChat,
+  createAssistantMessage,
+  createSession,
+  currentConnection,
+  currentProject,
+  currentSession,
+  dismissSessionUndo,
+  restoreSessionUndo,
+  store,
+  undoSessionAt
+} from '../store'
+import type { Message, PlanItemStatus, Session, ToolCall } from '../types'
 import { runAgent } from '../services/agent'
+import { forkSessionFromMain, mergeSessionToMain, restoreSessionFiles } from '../services/api'
 import { sessionToTurns, streamModel, toFriendlyError } from '../services/model'
 import MessageItem from './MessageItem.vue'
+import BranchGraph from './BranchGraph.vue'
 
 const draft = ref('')
 const listEl = ref<HTMLElement | null>(null)
@@ -14,6 +28,24 @@ const runState = ref<'idle' | 'running'>('idle')
 const inputError = ref('')
 const controller = ref<AbortController | null>(null)
 const activeMessageId = ref('')
+const stepState = ref<{ index: number } | null>(null)
+const runPhase = ref<'planning' | 'executing' | 'verifying' | 'compacting' | 'done' | ''>('')
+const graphOpen = ref(false)
+const merging = ref(false)
+const confirmClear = ref(false)
+const notice = ref('')
+let noticeTimer: number | undefined
+let clearTimer: number | undefined
+let autoScroll = true
+let scrollRaf = 0
+
+function flashNotice(message: string): void {
+  notice.value = message
+  if (noticeTimer) window.clearTimeout(noticeTimer)
+  noticeTimer = window.setTimeout(() => {
+    notice.value = ''
+  }, 5000)
+}
 
 const session = computed<Session>(() => currentSession() as Session)
 const messages = computed(() => session.value.messages)
@@ -21,6 +53,31 @@ const connection = computed(() => currentConnection())
 const workspace = computed(() => currentProject()?.directoryName ?? '')
 const isRunning = computed(() => runState.value === 'running')
 const activeMessage = computed(() => messages.value.find((m) => m.id === activeMessageId.value))
+const phaseText = computed(() => {
+  switch (runPhase.value) {
+    case 'planning':
+      return '正在规划任务'
+    case 'verifying':
+      return '正在验证结果'
+    case 'compacting':
+      return '正在压缩历史上下文'
+    case 'done':
+      return '已完成'
+    default:
+      return '正在执行'
+  }
+})
+const runLabel = computed(() => {
+  if (!isRunning.value) return ''
+  const round = stepState.value ? `回合 ${stepState.value.index} · ` : ''
+  return `${round}${phaseText.value}`
+})
+const tokenLabel = computed(() => {
+  const input = session.value.runTokens.input
+  const output = session.value.runTokens.output
+  if (!input && !output) return ''
+  return `已用 ${((input + output) / 1000).toFixed(1)}K tokens`
+})
 
 function upsertTool(message: Message, tool: ToolCall): void {
   const index = message.tools.findIndex((item) => item.id === tool.id)
@@ -36,10 +93,36 @@ function recordFileChange(tool: ToolCall): void {
   session.value.filesChanged.unshift({ path: tool.path, kind, summary })
 }
 
+function appendAssistantText(message: Message, chunk: string): void {
+  message.content += chunk
+  const blocks = message.blocks ?? (message.blocks = [])
+  const last = blocks[blocks.length - 1]
+  if (last?.type === 'text') last.text += chunk
+  else blocks.push({ type: 'text', text: chunk })
+}
+
+function ensureToolBlock(message: Message, toolId: string): void {
+  const blocks = message.blocks ?? (message.blocks = [])
+  if (!blocks.some((block) => block.type === 'tool' && block.id === toolId)) {
+    blocks.push({ type: 'tool', id: toolId })
+  }
+}
+
+function onMessagesScroll(): void {
+  const el = listEl.value
+  if (!el) return
+  autoScroll = el.scrollTop + el.clientHeight >= el.scrollHeight - 90
+}
+
 async function scrollToBottom(): Promise<void> {
   await nextTick()
-  const el = listEl.value
-  if (el) el.scrollTop = el.scrollHeight
+  if (scrollRaf) return
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0
+    if (!autoScroll) return
+    const el = listEl.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
 }
 
 watch(messages, () => scrollToBottom(), { deep: true })
@@ -75,6 +158,7 @@ async function send(): Promise<void> {
   inputError.value = ''
   draft.value = ''
   autosize()
+  session.value.truncatedTail = undefined
   appendUserMessage(text)
   const message = createAssistantMessage()
   activeMessageId.value = message.id
@@ -83,53 +167,214 @@ async function send(): Promise<void> {
   const aborter = new AbortController()
   controller.value = aborter
   runState.value = 'running'
+  store.streaming = true
+  stepState.value = null
+  runPhase.value = ''
 
   let inputTokens = 0
   let outputTokens = 0
+  const warnings: string[] = []
+  let runError = ''
   try {
     if (workspace.value) {
-      for await (const event of runAgent(connection.value, turns, workspace.value, aborter.signal)) {
-        if (event.type === 'text' && event.text) message.content += event.text
-        else if (event.tool) {
+      for await (const event of runAgent(connection.value, turns, workspace.value, session.value.id, aborter.signal)) {
+        if (event.type === 'step') {
+          const step = { index: event.index ?? 1 }
+          stepState.value = step
+          message.step = step
+        } else if (event.type === 'phase') {
+          runPhase.value = event.phase ?? ''
+        } else if (event.type === 'plan' && Array.isArray(event.plan)) {
+          message.plan = event.plan
+        } else if (event.type === 'plan_update' && event.planId && message.plan) {
+          const item = message.plan.find((entry) => entry.id === event.planId)
+          if (item && event.planStatus) item.status = event.planStatus as PlanItemStatus
+        } else if (event.type === 'text' && event.text) {
+          appendAssistantText(message, event.text)
+        } else if (event.type === 'tool_pending' && event.tool) {
           upsertTool(message, event.tool)
-          if (event.type === 'tool_result') recordFileChange(event.tool)
+          ensureToolBlock(message, event.tool.id)
+        } else if (event.type === 'tool_progress' && event.toolId) {
+          const target = message.tools.find((item) => item.id === event.toolId)
+          if (target && target.state === 'pending') {
+            target.progressChars = event.chars ?? 0
+          }
+        } else if (event.tool) {
+          upsertTool(message, event.tool)
+          if (event.type === 'tool') ensureToolBlock(message, event.tool.id)
+          if (event.type === 'tool_result') {
+            recordFileChange(event.tool)
+            if (event.tool.failed) {
+              warnings.push(`工具「${event.tool.title}」执行失败，请查看上方输出。`)
+            }
+          }
+        } else if (event.type === 'warning' && event.message) {
+          warnings.push(event.message)
         } else if (event.type === 'usage') {
           inputTokens = event.input ?? 0
           outputTokens = event.output ?? 0
+        } else if (event.type === 'error') {
+          runError = event.message || 'Agent 执行失败。'
         }
       }
     } else {
       for await (const event of streamModel(connection.value, turns, aborter.signal)) {
-        if (event.text) message.content += event.text
+        if (event.text) appendAssistantText(message, event.text)
         if (event.usage) {
           inputTokens = event.usage.input
           outputTokens = event.usage.output
         }
       }
     }
+    if (warnings.length) message.warnings = warnings
     if (inputTokens || outputTokens) {
       session.value.runTokens.input += inputTokens
       session.value.runTokens.output += outputTokens
     }
-    message.status = 'done'
+    if (stepState.value?.index) message.stepsUsed = stepState.value.index
+    if (runError) {
+      message.status = 'error'
+      appendAssistantText(message, message.content ? `\n\n${runError}` : runError)
+    } else {
+      message.status = 'done'
+    }
   } catch (error) {
     if (aborter.signal.aborted) {
-      if (!message.content) message.content = '已停止。'
+      if (stepState.value?.index) message.stepsUsed = stepState.value.index
+      if (!message.content) appendAssistantText(message, '已停止。')
+      else appendAssistantText(message, '\n\n（已停止）')
+      if (warnings.length) message.warnings = warnings
       message.status = 'done'
     } else {
+      if (stepState.value?.index) message.stepsUsed = stepState.value.index
       message.status = 'error'
       const detail = toFriendlyError(error)
-      message.content = message.content ? `${message.content}\n\n${detail}` : detail
+      appendAssistantText(message, message.content ? `\n\n${detail}` : detail)
+      if (warnings.length) message.warnings = warnings
     }
   } finally {
     runState.value = 'idle'
     controller.value = null
     activeMessageId.value = ''
+    stepState.value = null
+    runPhase.value = ''
+    store.streaming = false
   }
 }
 
 function stop(): void {
   controller.value?.abort()
+}
+
+async function onUndoRound(messageId: string): Promise<void> {
+  const sess = session.value
+  if (isRunning.value) return
+  const index = sess.messages.findIndex((m) => m.id === messageId)
+  if (index < 0) return
+  const roundOf = sess.messages.slice(0, index).filter((m) => m.role === 'user').length
+  const boundary = roundOf - 1
+  let restoredCount = 0
+  let restoreFailed = false
+  let tipRound = 0
+  try {
+    const result = await restoreSessionFiles(sess.id, boundary)
+    restoredCount = result?.restored?.length ?? 0
+    tipRound = result?.tipRound ?? 0
+  } catch {
+    restoreFailed = true
+  }
+  undoSessionAt(sess, messageId)
+  if (sess.truncatedTail) {
+    sess.truncatedTail.filesRestored = restoredCount
+    sess.truncatedTail.filesFailed = restoreFailed
+    sess.truncatedTail.tipRound = tipRound
+  }
+}
+
+async function restoreUndo(): Promise<void> {
+  const sess = session.value
+  if (!sess?.truncatedTail) return
+  const { tipRound } = sess.truncatedTail
+  restoreSessionUndo(sess)
+  // 还原会话消息的同时，把文件恢复到撤销前的最新状态（git 式切换）
+  void restoreSessionFiles(sess.id, tipRound ?? null, true).catch(() => {
+    // 文件还原失败不阻塞消息还原
+  })
+}
+
+function dismissUndo(): void {
+  dismissSessionUndo(session.value)
+}
+
+async function mergeCurrent(): Promise<void> {
+  if (isRunning.value || merging.value) return
+  merging.value = true
+  try {
+    const result = await mergeSessionToMain(session.value.id)
+    if (result.ok === false || result.conflicts?.length) {
+      const conflicts = result.conflicts?.length ? `（冲突文件：${result.conflicts.join('、')}）` : ''
+      flashNotice(`${result.error ?? '合并失败'}${conflicts}`)
+    } else if (result.merged === 'already') {
+      flashNotice('当前分支已包含在主分支中。')
+    } else if (result.fastForward) {
+      flashNotice('已快进合并到主分支。')
+    } else if (result.mergedSha) {
+      flashNotice('已合并到主分支。')
+    }
+  } catch (cause) {
+    flashNotice(cause instanceof Error ? cause.message : '合并失败。')
+  } finally {
+    merging.value = false
+  }
+}
+
+function requestClearChat(): void {
+  const sess = session.value
+  if (!sess || isRunning.value) return
+  if (confirmClear.value) {
+    if (clearTimer) window.clearTimeout(clearTimer)
+    confirmClear.value = false
+    clearChat(sess)
+    flashNotice('聊天记录已清空，文件改动保留。')
+    return
+  }
+  confirmClear.value = true
+  clearTimer = window.setTimeout(() => {
+    confirmClear.value = false
+  }, 3000)
+}
+
+async function onBranchRound(messageId: string): Promise<void> {
+  const sess = session.value
+  if (isRunning.value) return
+  const index = sess.messages.findIndex((m) => m.id === messageId)
+  const anchor = index >= 0 ? sess.messages[index] : null
+  const summary = anchor?.content.trim().slice(0, 16) || sess.title || '对话'
+  // 新语义：先把当前分支合并进主分支，再从主分支新建一个全新空会话
+  try {
+    const result = await mergeSessionToMain(sess.id)
+    if (result.ok === false) {
+      if (result.code !== 'no-commits') {
+        const conflicts = result.conflicts?.length ? `（冲突文件：${result.conflicts.join('、')}）` : ''
+        flashNotice(`${result.error ?? '合并失败，未新建分支。'}${conflicts}`)
+        return
+      }
+    } else if (result.conflicts?.length) {
+      flashNotice(`合并冲突，未新建分支（冲突文件：${result.conflicts.join('、')}）。`)
+      return
+    }
+    const branch = createSession(`分支 · ${summary}`)
+    if (workspace.value) {
+      try {
+        await forkSessionFromMain(branch.id, workspace.value)
+      } catch {
+        // 分支元数据写入失败不影响进入空分支
+      }
+    }
+    flashNotice('已把当前分支合并到主分支，并从主分支新建空会话。')
+  } catch (cause) {
+    flashNotice(cause instanceof Error ? cause.message : '新建分支失败。')
+  }
 }
 
 function openSettings(): void {
@@ -150,20 +395,69 @@ function suggest(text: string): void {
       <div class="conv-title-wrap">
         <h1>{{ session.title }}</h1>
         <div class="conv-meta">
-          <span class="chip"><GitBranch :size="12" /> {{ session.branch }}</span>
+          <span class="chip" title="每个会话是一条从主分支分叉出的分支"><GitBranch :size="12" /> 分支</span>
           <span class="chip">{{ connection?.label ?? '未配置模型' }}</span>
           <span class="chip" :class="{ connected: workspace }">
             <FolderOpen :size="12" />
             {{ workspace ? '服务器工作区' : '未关联工作区' }}
           </span>
           <span class="msg-count">{{ messages.length }} 条消息</span>
+          <button
+            class="chip"
+            type="button"
+            :disabled="merging"
+            :title="'把当前分支的文件改动合并进主分支'"
+            @click="mergeCurrent"
+          >
+            <GitMerge :size="12" />
+            {{ merging ? '合并中…' : '合并到主分支' }}
+          </button>
+          <button
+            class="chip"
+            :class="{ confirm: confirmClear }"
+            type="button"
+            :title="confirmClear ? '再次点击确认清空（文件改动保留）' : '清空聊天记录（只清消息，保留文件改动）'"
+            @click="requestClearChat"
+          >
+            <Eraser :size="12" />
+            {{ confirmClear ? '再次点击确认清空' : '清空聊天' }}
+          </button>
+          <button class="chip graph-chip" type="button" @click="graphOpen = true">
+            <GitBranch :size="12" />
+            分支图
+          </button>
         </div>
       </div>
     </header>
 
-    <div ref="listEl" class="messages-scroll">
+    <div v-if="notice" class="notice-bar">{{ notice }}</div>
+
+    <div v-if="isRunning" class="run-progress"><span class="progress-bar"></span></div>
+
+    <div v-if="session.truncatedTail" class="truncated-bar">
+      <span>
+        已撤销 {{ session.truncatedTail.removed.length }} 条消息
+        <template v-if="session.truncatedTail.filesRestored">，已自动回滚 {{ session.truncatedTail.filesRestored }} 处文件改动</template>
+        <template v-else-if="session.truncatedTail.filesFailed">，部分文件未能回滚</template>
+      </span>
+      <button class="truncated-restore" type="button" @click="restoreUndo">还原（含文件）</button>
+      <button class="truncated-close" type="button" aria-label="关闭提示" @click="dismissUndo">
+        <X :size="13" />
+      </button>
+    </div>
+
+    <div ref="listEl" class="messages-scroll" @scroll.passive="onMessagesScroll">
       <div class="messages-inner">
-        <MessageItem v-for="message in messages" :key="message.id" :message="message" />
+        <MessageItem
+          v-for="message in messages"
+          :key="message.id"
+          :message="message"
+          :phase="message.id === activeMessageId ? runPhase : ''"
+          :step="message.id === activeMessageId ? stepState : null"
+          :undo-disabled="isRunning"
+          @undo="onUndoRound(message.id)"
+          @branch="onBranchRound(message.id)"
+        />
 
         <div v-if="!messages.length" class="empty-state">
           <div class="empty-icon"><Terminal :size="22" /></div>
@@ -217,12 +511,15 @@ function suggest(text: string): void {
         </div>
         <div class="composer-foot">
           <span class="dot" :class="{ pulse: isRunning, warn: !connection }"></span>
-          <span>{{ isRunning ? '生成中' : connection?.label ?? '未配置模型' }}</span>
+          <span>{{ isRunning ? runLabel : connection?.label ?? '未配置模型' }}</span>
           <span class="divider"></span>
+          <span v-if="tokenLabel" class="save-note">{{ tokenLabel }}</span>
           <span class="save-note">数据加密保存在服务器</span>
         </div>
       </div>
     </footer>
+
+    <BranchGraph :open="graphOpen" :workspace="workspace" @close="graphOpen = false" />
   </main>
 </template>
 
@@ -270,6 +567,118 @@ function suggest(text: string): void {
   border-color: rgba(15, 133, 118, 0.35);
   color: var(--teal);
   background: var(--teal-soft);
+}
+
+.graph-chip {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+}
+
+.graph-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.chip.confirm {
+  border-color: rgba(217, 67, 67, 0.4);
+  color: var(--danger);
+  background: rgba(217, 67, 67, 0.1);
+}
+
+.notice-bar {
+  flex: none;
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 8px 22px;
+  font-size: 12px;
+  color: var(--teal);
+  border-bottom: 1px solid var(--border);
+  background: var(--teal-soft);
+}
+
+.run-progress {
+  position: relative;
+  flex: none;
+  height: 2px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.run-progress .progress-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(370%);
+  }
+}
+
+.truncated-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 8px 22px;
+  box-sizing: border-box;
+  color: var(--text-secondary);
+  font-size: 12px;
+  background: var(--warning-soft, rgba(169, 116, 16, 0.1));
+  border-bottom: 1px solid rgba(169, 116, 16, 0.25);
+}
+
+.truncated-bar button {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.truncated-restore {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid rgba(15, 133, 118, 0.35);
+  border-radius: 999px;
+  background: var(--teal-soft);
+  color: var(--teal) !important;
+  font-weight: 600;
+}
+
+.truncated-restore:hover {
+  border-color: var(--teal);
+}
+
+.truncated-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+}
+
+.truncated-close:hover {
+  background: rgba(28, 37, 34, 0.08);
+  color: var(--text);
 }
 
 .messages-scroll {

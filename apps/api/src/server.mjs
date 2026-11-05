@@ -15,6 +15,7 @@ import {
 import { listServerDirectory } from './files.mjs'
 import { listModels, streamModelToClient, testModel } from './model.mjs'
 import { runAgentSteps } from './agent.mjs'
+import { createRevision } from './revision.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const WEB_DIST = resolve(here, '..', '..', 'web', 'dist')
@@ -63,6 +64,12 @@ async function readJson(req) {
 function bearerToken(req) {
   const header = req.headers.authorization || ''
   return header.startsWith('Bearer ') ? header.slice(7) : ''
+}
+
+// 通过会话 id 找到它所属项目的工作区目录；找不到返回空字符串
+function sessionWorkspace(sessionData, sessionId) {
+  const project = (sessionData?.projects ?? []).find((p) => (p?.sessionIds ?? []).includes(sessionId))
+  return typeof project?.directoryName === 'string' ? project.directoryName.trim() : ''
 }
 
 function requireSession(req, res) {
@@ -181,6 +188,15 @@ async function routeApi(req, res, pathname) {
       throw new Error('工作区不在当前账号的项目目录中。')
     }
 
+    const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+    let revision = null
+    if (sessionId) {
+      if (sessionWorkspace(auth.session.data, sessionId) !== workspace) {
+        throw new Error('会话与工作区不匹配。')
+      }
+      revision = await createRevision(workspace, sessionId)
+    }
+
     const controller = new AbortController()
     const onClose = () => controller.abort()
     req.on('close', onClose)
@@ -196,7 +212,8 @@ async function routeApi(req, res, pathname) {
         connection: body.connection,
         turns: body.turns,
         workspace,
-        signal: controller.signal
+        signal: controller.signal,
+        revision
       })) {
         if (res.destroyed) break
         res.write(`data: ${JSON.stringify(event)}\n\n`)
@@ -216,6 +233,109 @@ async function routeApi(req, res, pathname) {
       req.removeListener('close', onClose)
       res.removeListener('close', onClose)
     }
+    return
+  }
+
+  if (isPost && pathname === '/api/session/restore') {
+    const body = await readJson(req)
+    const sessionId = String(body.sessionId || '')
+    const workspace = sessionWorkspace(auth.session.data, sessionId)
+    if (!workspace) throw new Error('会话不存在或未关联工作区。')
+    const revision = await createRevision(workspace, sessionId)
+    const round = body.boundary == null ? null : Math.max(-1, Math.floor(Number(body.boundary)))
+    const result = body.restoreTo
+      ? await revision.restoreTo(round == null || round < 0 ? null : round)
+      : await revision.restore(round == null ? -1 : round)
+    sendJson(res, 200, { ok: true, ...result })
+    return
+  }
+
+  if (isPost && pathname === '/api/session/fork') {
+    const body = await readJson(req)
+    const toSessionId = String(body.toSessionId || '')
+    if (!toSessionId) throw new Error('缺少目标会话。')
+    if (body.fromMain === true) {
+      // 新模型：从主分支分叉，全新空会话
+      const projects = Array.isArray(auth.session.data?.projects) ? auth.session.data.projects : []
+      const toWorkspace = sessionWorkspace(auth.session.data, toSessionId) || String(body.workspace || '').trim()
+      if (!projects.some((project) => project?.directoryName === toWorkspace)) {
+        throw new Error('目标会话未关联有效的工作区。')
+      }
+      const revision = await createRevision(toWorkspace, toSessionId)
+      const result = await revision.forkFromMain(toSessionId, typeof body.name === 'string' ? body.name : '')
+      sendJson(res, 200, { ok: true, ...result })
+      return
+    }
+    const fromSessionId = String(body.fromSessionId || '')
+    const fromWorkspace = sessionWorkspace(auth.session.data, fromSessionId)
+    if (!fromWorkspace) throw new Error('源会话不存在或未关联工作区。')
+    // 目标会话可能是刚创建、vault 尚未同步的新会话：账号内信任其归属同一工作区
+    const toWorkspace = sessionWorkspace(auth.session.data, toSessionId) || fromWorkspace
+    if (toWorkspace !== fromWorkspace) throw new Error('分支会话必须属于同一个工作区。')
+    const revision = await createRevision(fromWorkspace, fromSessionId)
+    const boundary = body.boundary == null ? null : Math.max(-1, Math.floor(Number(body.boundary)))
+    const result = await revision.fork(toSessionId, boundary)
+    sendJson(res, 200, { ok: true, ...result })
+    return
+  }
+
+  if (isPost && pathname === '/api/session/merge') {
+    const body = await readJson(req)
+    const sessionId = String(body.sessionId || '')
+    const workspace = sessionWorkspace(auth.session.data, sessionId)
+    if (!workspace) throw new Error('会话不存在或未关联工作区。')
+    const revision = await createRevision(workspace, sessionId)
+    const result = await revision.merge()
+    sendJson(res, 200, { ok: true, ...result })
+    return
+  }
+
+  if (isPost && pathname === '/api/session/clear') {
+    const body = await readJson(req)
+    const sessionId = String(body.sessionId || '')
+    const workspace = sessionWorkspace(auth.session.data, sessionId)
+    if (!workspace) throw new Error('会话不存在或未关联工作区。')
+    const revision = await createRevision(workspace, sessionId)
+    const result = await revision.clear()
+    sendJson(res, 200, { ok: true, ...result })
+    return
+  }
+
+  if (isPost && pathname === '/api/session/delete-snapshots') {
+    const body = await readJson(req)
+    const sessionId = String(body.sessionId || '')
+    const workspace = sessionWorkspace(auth.session.data, sessionId)
+    if (sessionId && workspace) {
+      const revision = await createRevision(workspace, sessionId)
+      await revision.destroy()
+    }
+    sendJson(res, 200, { ok: true })
+    return
+  }
+
+  if (isPost && pathname === '/api/session/graph') {
+    const body = await readJson(req)
+    const workspace = typeof body.workspace === 'string' ? body.workspace.trim() : ''
+    const projects = Array.isArray(auth.session.data?.projects) ? auth.session.data.projects : []
+    if (!projects.some((project) => project?.directoryName === workspace)) {
+      throw new Error('工作区不在当前账号的项目目录中。')
+    }
+    const revision = await createRevision(workspace, 'graph')
+    const graph = await revision.graph()
+    sendJson(res, 200, { ok: true, ...graph })
+    return
+  }
+
+  if (isPost && pathname === '/api/session/round-diff') {
+    const body = await readJson(req)
+    const workspace = typeof body.workspace === 'string' ? body.workspace.trim() : ''
+    const projects = Array.isArray(auth.session.data?.projects) ? auth.session.data.projects : []
+    if (!projects.some((project) => project?.directoryName === workspace)) {
+      throw new Error('工作区不在当前账号的项目目录中。')
+    }
+    const revision = await createRevision(workspace, 'diff')
+    const patch = await revision.diff(String(body.sha || '').replace(/[^0-9a-f]/gi, ''))
+    sendJson(res, 200, { ok: true, patch })
     return
   }
 

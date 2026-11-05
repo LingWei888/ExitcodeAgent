@@ -4,7 +4,10 @@ import { dirname, resolve, sep } from 'node:path'
 
 const workspaceRoot = process.env.EXITCODE_WORKSPACE_ROOT ? resolve(process.env.EXITCODE_WORKSPACE_ROOT) : null
 const MAX_TOOL_READ_BYTES = 256 * 1024
+const MAX_SEARCH_SCAN_BYTES = 32 * 1024 * 1024
 const IGNORED_DIRS = new Set(['.git', '.svn', '.hg', 'node_modules', 'dist', 'build', 'coverage', '.cache', '.next', '.venv', 'vendor', 'tmp', '.tmp'])
+
+const yieldLoop = () => new Promise((resolve) => setImmediate(resolve))
 
 function isInside(root, target) {
   return target === root || target.startsWith(root + sep)
@@ -13,7 +16,7 @@ function isInside(root, target) {
 export function resolveServerPath(inputPath, scopeRoot) {
   const requested = typeof inputPath === 'string' && inputPath.trim() ? inputPath.trim() : ''
   const scope = scopeRoot ? resolve(scopeRoot) : null
-  const target = requested ? resolve(requested) : scope || workspaceRoot || os.homedir()
+  const target = requested ? (scope ? resolve(scope, requested) : resolve(requested)) : scope || workspaceRoot || os.homedir()
   if (scope && !isInside(scope, target)) {
     throw new Error('路径超出当前工作区范围。')
   }
@@ -127,11 +130,22 @@ export async function searchServerFiles(inputPath, rawPattern, scopeRoot, maxRes
   const root = resolveServerPath(inputPath || '', scopeRoot)
   const matcher = compilePattern(rawPattern)
   const matches = []
+  let bytesScanned = 0
+  let truncated = false
+  let visited = 0
 
   async function searchFile(filePath) {
+    if (bytesScanned >= MAX_SEARCH_SCAN_BYTES) {
+      truncated = true
+      return
+    }
     const fileStat = await stat(filePath)
     if (!fileStat.isFile() || fileStat.size > 512 * 1024 || fileStat.size === 0) return
-    const { content } = await readTextFile(filePath, 512 * 1024)
+    const remaining = MAX_SEARCH_SCAN_BYTES - bytesScanned
+    const readSize = Math.min(fileStat.size, remaining)
+    bytesScanned += readSize
+    if (bytesScanned >= MAX_SEARCH_SCAN_BYTES) truncated = true
+    const { content } = await readTextFile(filePath, readSize)
     if (content.includes('\u0000')) return
     const lines = content.split('\n')
     for (let index = 0; index < lines.length && matches.length < maxResults; index++) {
@@ -142,7 +156,7 @@ export async function searchServerFiles(inputPath, rawPattern, scopeRoot, maxRes
   }
 
   async function walk(dir, depth) {
-    if (depth > 8 || matches.length >= maxResults) return
+    if (depth > 8 || matches.length >= maxResults || bytesScanned >= MAX_SEARCH_SCAN_BYTES) return
     let entries
     try {
       entries = await readdir(dir, { withFileTypes: true })
@@ -151,7 +165,9 @@ export async function searchServerFiles(inputPath, rawPattern, scopeRoot, maxRes
     }
     entries.sort((a, b) => a.name.localeCompare(b.name))
     for (const entry of entries) {
-      if (matches.length >= maxResults) return
+      if (matches.length >= maxResults || bytesScanned >= MAX_SEARCH_SCAN_BYTES) return
+      visited++
+      if (visited % 12 === 0) await yieldLoop()
       const full = resolve(dir, entry.name)
       if (entry.isDirectory()) {
         if (!IGNORED_DIRS.has(entry.name)) await walk(full, depth + 1)
@@ -162,5 +178,5 @@ export async function searchServerFiles(inputPath, rawPattern, scopeRoot, maxRes
   }
 
   await walk(root, 0)
-  return { root, matches, count: matches.length }
+  return { root, matches, count: matches.length, truncated }
 }

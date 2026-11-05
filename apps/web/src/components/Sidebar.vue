@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import { Check, FolderGit2, MessagesSquare, Plus, Radio, X } from 'lucide-vue-next'
-import { createSession, store } from '../store'
+import { Check, FolderGit2, MessagesSquare, Plus, Radio, Trash2, X } from 'lucide-vue-next'
+import { createSession, deleteProject, deleteSession, store } from '../store'
+import { forkSessionFromMain } from '../services/api'
 
 const mode = ref<'projects' | 'sessions'>('projects')
 const addingSession = ref(false)
 const newTitle = ref('')
 const inputEl = ref<HTMLInputElement | null>(null)
+const confirmingDelete = ref('')
+let confirmTimer: number | undefined
 
 const currentProject = computed(() => store.projects.find((p) => p.id === store.currentProjectId))
 const sessionList = computed(() =>
@@ -32,10 +35,31 @@ async function startAddSession(): Promise<void> {
 function commitSession(): void {
   const title = newTitle.value.trim()
   if (title) {
-    createSession(title.length > 24 ? `${title.slice(0, 24)}…` : title)
+    const session = createSession(title.length > 24 ? `${title.slice(0, 24)}…` : title)
+    // 新分支统一从主分支分叉（全新空聊天）；服务端对未分叉过的会话也会惰性建分支兜底
+    const directoryName = currentProject.value?.directoryName
+    if (directoryName) {
+      void forkSessionFromMain(session.id, directoryName).catch(() => {
+        // 分支元数据写入失败不影响新建空会话
+      })
+    }
     mode.value = 'sessions'
   }
   addingSession.value = false
+}
+
+function requestDelete(kind: 'project' | 'session', id: string): void {
+  if (confirmTimer) window.clearTimeout(confirmTimer)
+  if (confirmingDelete.value === id) {
+    confirmingDelete.value = ''
+    if (kind === 'project') deleteProject(id)
+    else deleteSession(id)
+    return
+  }
+  confirmingDelete.value = id
+  confirmTimer = window.setTimeout(() => {
+    confirmingDelete.value = ''
+  }, 3000)
 }
 </script>
 
@@ -77,6 +101,15 @@ function commitSession(): void {
             <small>{{ project.description }}</small>
           </span>
           <span class="active-check"><Check :size="13" /></span>
+          <span
+            class="item-del"
+            :class="{ confirm: confirmingDelete === project.id }"
+            role="button"
+            :title="confirmingDelete === project.id ? '再次点击确认删除' : '删除项目（仅删除记录，不删服务器文件）'"
+            @click.stop="requestDelete('project', project.id)"
+          >
+            <Trash2 :size="13" />
+          </span>
         </button>
 
         <div v-if="!store.projects.length" class="empty-note">
@@ -119,6 +152,15 @@ function commitSession(): void {
           <span class="session-copy">
             <strong>{{ session.title }}</strong>
             <small>{{ session.updatedAt }} ，{{ session.messages.length }} 条消息</small>
+          </span>
+          <span
+            class="item-del"
+            :class="{ confirm: confirmingDelete === session.id }"
+            role="button"
+            :title="confirmingDelete === session.id ? '再次点击确认删除' : '删除会话（仅删除记录，不删服务器文件）'"
+            @click.stop="requestDelete('session', session.id)"
+          >
+            <Trash2 :size="13" />
           </span>
         </button>
 
@@ -289,6 +331,35 @@ function commitSession(): void {
 
 .project-item.active .active-check {
   display: inline-flex;
+}
+
+.item-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: var(--radius-s);
+  opacity: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.project-item:hover .item-del,
+.session-item:hover .item-del,
+.item-del.confirm {
+  opacity: 1;
+}
+
+.item-del:hover {
+  background: rgba(217, 67, 67, 0.1);
+  color: var(--danger);
+}
+
+.item-del.confirm {
+  background: rgba(217, 67, 67, 0.14);
+  color: var(--danger);
 }
 
 .add-button {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
   Copy,
@@ -19,6 +20,8 @@ import type { ToolCall } from '../types'
 const props = defineProps<{ tool: ToolCall }>()
 const open = ref(false)
 const copied = ref(false)
+const elapsedMs = ref(Date.now())
+let ticker: number | undefined
 
 const icon = computed(() => {
   const map = {
@@ -37,7 +40,46 @@ const icon = computed(() => {
 const stateCopy = computed(() => {
   if (props.tool.state === 'running') return '执行中'
   if (props.tool.state === 'pending') return '排队中'
+  if (props.tool.failed) return '失败'
   return '完成'
+})
+
+const elapsedLabel = computed(() => {
+  if (props.tool.state !== 'running' && props.tool.state !== 'pending') return ''
+  const seconds = Math.floor((Date.now() - elapsedMs.value) / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m${String(seconds % 60).padStart(2, '0')}s`
+})
+
+const progressLabel = computed(() => {
+  if (props.tool.state !== 'pending') return ''
+  const chars = props.tool.progressChars ?? 0
+  const human = chars > 1024 ? `${(chars / 1024).toFixed(1)} KB` : `${chars} B`
+  if (props.tool.kind === 'write_file') return `正在生成文件内容（${human}）…`
+  if (props.tool.kind === 'grep') return `正在理解搜索条件…`
+  return `正在准备调用参数（${human}）…`
+})
+
+watch(
+  () => props.tool.state,
+  (state) => {
+    if (state === 'running' || state === 'pending') {
+      if (!ticker) elapsedMs.value = Date.now()
+      if (ticker) window.clearInterval(ticker)
+      ticker = window.setInterval(() => {
+        elapsedMs.value = Date.now()
+      }, 1000)
+    } else if (ticker) {
+      window.clearInterval(ticker)
+      ticker = undefined
+    }
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  if (ticker) window.clearInterval(ticker)
 })
 
 const diffLines = computed<Array<{ cls: string; text: string }>>(() => {
@@ -70,12 +112,14 @@ async function copyOutput(): Promise<void> {
       <span class="tool-copy">
         <strong>{{ tool.title }}</strong>
         <code v-if="tool.command">{{ tool.command }}</code>
+        <span v-if="progressLabel" class="tool-pending-line">{{ progressLabel }}</span>
       </span>
-      <span class="state-chip" :class="tool.state">
+      <span class="state-chip" :class="[tool.state, { failed: tool.failed }]">
         <span v-if="tool.state === 'running'" class="mini-dot pulse"></span>
+        <AlertTriangle v-else-if="tool.failed" :size="12" />
         <Check v-else-if="tool.state === 'done'" :size="12" />
         <span v-else class="mini-dot"></span>
-        {{ stateCopy }}
+        {{ stateCopy }}<span v-if="elapsedLabel" class="elapsed">{{ elapsedLabel }}</span>
       </span>
       <ChevronDown v-if="tool.output || tool.diff" class="chevron" :class="{ open }" :size="14" />
     </button>
@@ -109,16 +153,22 @@ async function copyOutput(): Promise<void> {
   position: relative;
   border: 0;
   border-left: 2px solid var(--border);
-  background: transparent;
+  border-radius: 8px;
+  background: rgba(28, 37, 34, 0.02);
   overflow: hidden;
 }
 
 .tool-call.running {
   border-left-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .tool-call.done {
   border-left-color: var(--teal);
+}
+
+.tool-call.failed {
+  border-left-color: var(--danger);
 }
 
 .tool-row:not(:disabled):hover {
@@ -162,6 +212,11 @@ async function copyOutput(): Promise<void> {
   color: var(--teal);
 }
 
+.tool-call.failed .tool-icon {
+  background: rgba(217, 67, 67, 0.1);
+  color: var(--danger);
+}
+
 .tool-copy {
   display: flex;
   flex-direction: column;
@@ -184,6 +239,14 @@ async function copyOutput(): Promise<void> {
   font-size: 10px;
 }
 
+.tool-pending-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+  font-size: 10px;
+}
+
 .state-chip {
   display: inline-flex;
   align-items: center;
@@ -199,6 +262,17 @@ async function copyOutput(): Promise<void> {
 
 .state-chip.done {
   color: var(--teal);
+}
+
+.state-chip.failed {
+  color: var(--danger);
+}
+
+.elapsed {
+  padding-left: 5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 .mini-dot {

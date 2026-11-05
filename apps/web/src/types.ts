@@ -10,6 +10,14 @@ export type ToolKind =
 
 export type ToolState = 'pending' | 'running' | 'done'
 
+export type PlanItemStatus = 'pending' | 'running' | 'done' | 'failed'
+
+export interface PlanItem {
+  id: string
+  title: string
+  status: PlanItemStatus
+}
+
 export interface ToolCall {
   id: string
   kind: ToolKind
@@ -17,6 +25,8 @@ export interface ToolCall {
   command?: string
   detail?: string
   output?: string
+  failed?: boolean
+  progressChars?: number
   diff?: string
   path?: string
   changeKind?: 'created' | 'modified' | 'deleted'
@@ -31,6 +41,11 @@ export interface Message {
   thinking?: string
   tools: ToolCall[]
   status: 'pending' | 'streaming' | 'done' | 'error'
+  step?: { index: number; total?: number }
+  plan?: PlanItem[]
+  stepsUsed?: number
+  warnings?: string[]
+  blocks?: Array<{ type: 'text'; text: string } | { type: 'tool'; id: string }>
 }
 
 export interface FileChange {
@@ -47,6 +62,14 @@ export interface Session {
   messages: Message[]
   runTokens: { input: number; output: number }
   filesChanged: FileChange[]
+  truncatedTail?: {
+    keptUpTo: string
+    removed: Message[]
+    at: string
+    filesRestored?: number
+    filesFailed?: boolean
+    tipRound?: number
+  }
 }
 
 export interface Project {
