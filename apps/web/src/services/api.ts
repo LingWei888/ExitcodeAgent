@@ -1,7 +1,24 @@
-let sessionToken = ''
+const SESSION_TOKEN_KEY = 'exitcode.session-token'
+
+function readStoredToken(): string {
+  try {
+    return sessionStorage.getItem(SESSION_TOKEN_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+// 令牌存 sessionStorage：刷新（同一标签页）保持登录；新开标签页/新窗口为隔离会话，需重新解锁
+let sessionToken = readStoredToken()
 
 export function setSessionToken(token: string | null): void {
   sessionToken = token ?? ''
+  try {
+    if (sessionToken) sessionStorage.setItem(SESSION_TOKEN_KEY, sessionToken)
+    else sessionStorage.removeItem(SESSION_TOKEN_KEY)
+  } catch {
+    // 存储不可用时退化为内存态
+  }
 }
 
 export interface FileRestoreEntry {
@@ -148,12 +165,29 @@ export async function apiRequest<T>(
   }
 
   if (!response.ok) {
+    // 401 = 会话过期或已失效：清掉本地令牌并广播，让应用回到登录页
+    if (response.status === 401 && sessionToken) {
+      sessionToken = ''
+      try {
+        sessionStorage.removeItem(SESSION_TOKEN_KEY)
+      } catch {
+        // ignore
+      }
+      window.dispatchEvent(new CustomEvent('exitcode:session-expired'))
+    }
     const message =
       payload && typeof payload === 'object' && 'error' in payload
         ? String((payload as { error: unknown }).error)
         : `请求失败（HTTP ${response.status}）`
-    throw new Error(message)
+    const error = new Error(message) as Error & { payload?: unknown }
+    error.payload = payload
+    throw error
   }
 
   return payload as T
+}
+
+export async function newCaptcha(): Promise<string> {
+  const { captchaId } = await apiRequest<{ captchaId: string }>('/api/captcha/new')
+  return captchaId
 }

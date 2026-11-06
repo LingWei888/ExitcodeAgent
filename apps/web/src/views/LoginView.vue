@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Boxes, KeyRound, LockKeyhole, ShieldCheck, Terminal } from 'lucide-vue-next'
-import { hasLocalAccount } from '../services/secureStore'
+import { Boxes, KeyRound, LockKeyhole, RefreshCcw, ShieldCheck } from 'lucide-vue-next'
+import { fetchServerState } from '../services/secureStore'
+import { newCaptcha } from '../services/api'
 import { setupAccount, unlockAccount } from '../store'
 
 const hasAccount = ref(false)
@@ -12,13 +13,41 @@ const name = ref('')
 const password = ref('')
 const confirmPassword = ref('')
 
+const captchaRequired = ref(false)
+const captchaId = ref('')
+const captchaImgUrl = ref('')
+const captcha = ref('')
+
 onMounted(async () => {
   try {
-    hasAccount.value = await hasLocalAccount()
+    const state = await fetchServerState()
+    hasAccount.value = state.hasAccount
+    if (state.captchaRequired) {
+      await showCaptcha()
+    }
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '无法连接服务端。'
   }
 })
+
+async function showCaptcha(serverId?: string): Promise<void> {
+  captchaRequired.value = true
+  captcha.value = ''
+  if (serverId) {
+    captchaId.value = serverId
+  } else {
+    try {
+      captchaId.value = await newCaptcha()
+    } catch {
+      return
+    }
+  }
+  captchaImgUrl.value = `/api/captcha/${captchaId.value}?t=${Date.now()}`
+}
+
+function errorPayload(cause: unknown): { captchaRequired?: boolean; captchaId?: string } | null {
+  return (cause as { payload?: { captchaRequired?: boolean; captchaId?: string } })?.payload ?? null
+}
 
 async function submit(): Promise<void> {
   if (busy.value) return
@@ -54,9 +83,17 @@ async function submit(): Promise<void> {
   }
   busy.value = true
   try {
-    await unlockAccount(password.value)
+    await unlockAccount(
+      password.value,
+      captchaRequired.value ? captcha.value : undefined,
+      captchaRequired.value ? captchaId.value : undefined
+    )
   } catch (cause) {
+    const payload = errorPayload(cause)
     error.value = cause instanceof Error ? cause.message : '解锁失败。'
+    if (payload?.captchaRequired) {
+      await showCaptcha(payload.captchaId)
+    }
   } finally {
     busy.value = false
   }
@@ -67,7 +104,7 @@ async function submit(): Promise<void> {
   <main class="login-shell">
     <section class="brand-panel">
       <div class="brand-top">
-        <span class="logo-mark"><Terminal :size="18" /></span>
+        <span class="logo-mark"><img src="/logo.ico" alt="ExitcodeAgent" /></span>
         <span class="brand-name">ExitcodeAgent</span>
       </div>
 
@@ -142,6 +179,26 @@ async function submit(): Promise<void> {
               <span>口令</span>
               <input v-model="password" class="field" type="password" placeholder="••••••••" autocomplete="current-password" />
             </label>
+            <template v-if="captchaRequired">
+              <div class="captcha-row">
+                <label class="form-field captcha-field">
+                  <span>图形验证码</span>
+                  <input
+                    v-model="captcha"
+                    class="field"
+                    type="text"
+                    placeholder="输入图中字符（不区分大小写）"
+                    autocomplete="off"
+                    maxlength="4"
+                  />
+                </label>
+                <button class="captcha-img-btn" type="button" title="看不清？点击刷新" @click="showCaptcha()">
+                  <img v-if="captchaImgUrl" :src="captchaImgUrl" alt="图形验证码" />
+                  <RefreshCcw :size="13" class="captcha-refresh-icon" />
+                </button>
+              </div>
+              <p class="captcha-note">多次输错后需要输入图形验证码，防止密码被暴力破解。</p>
+            </template>
             <p v-if="error" class="form-error">{{ error }}</p>
             <button class="btn-primary submit-btn" type="submit" :disabled="busy">
               {{ busy ? '解锁中' : '解锁' }}
@@ -181,7 +238,7 @@ async function submit(): Promise<void> {
   position: absolute;
   inset: auto -16% -44% 28%;
   height: 70%;
-  border: 1px solid rgba(223, 79, 30, 0.24);
+  border: 1px solid rgba(84, 67, 186, 0.2);
   border-radius: 50%;
   transform: rotate(-12deg);
   pointer-events: none;
@@ -203,8 +260,12 @@ async function submit(): Promise<void> {
   width: 34px;
   height: 34px;
   border-radius: var(--radius-s);
-  background: var(--accent);
-  color: #1b0d04;
+}
+
+.logo-mark img {
+  width: 34px;
+  height: 34px;
+  border-radius: 5px;
 }
 
 .brand-name {
@@ -321,6 +382,52 @@ h2 {
 .form-error {
   color: var(--danger);
   font-size: 13px;
+}
+
+.captcha-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.captcha-field {
+  flex: 1;
+}
+
+.captcha-img-btn {
+  position: relative;
+  flex: none;
+  width: 132px;
+  height: 40px;
+  margin-bottom: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  overflow: hidden;
+  background: var(--bg-inset);
+  cursor: pointer;
+}
+
+.captcha-img-btn img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.captcha-refresh-icon {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  padding: 2px;
+}
+
+.captcha-note {
+  margin-top: -6px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .submit-btn {

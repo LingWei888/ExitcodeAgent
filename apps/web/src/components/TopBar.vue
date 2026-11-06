@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { Bot, ChevronDown, Lock, PanelLeftOpen, PanelRightOpen, Settings, Terminal } from 'lucide-vue-next'
+import { Bot, ChevronDown, Lock, PanelLeftOpen, PanelRightOpen, Settings } from 'lucide-vue-next'
 import { currentConnection, lockAccount, store } from '../store'
 
 const modelMenuOpen = ref(false)
@@ -32,7 +32,7 @@ function selectModel(id: string): void {
       <button class="icon-btn mobile-toggle" type="button" aria-label="打开侧栏" @click="store.mobileSidebarOpen = !store.mobileSidebarOpen">
         <PanelLeftOpen :size="18" />
       </button>
-      <span class="logo-mark"><Terminal :size="17" /></span>
+      <span class="logo-mark"><img src="/logo.ico" alt="ExitcodeAgent" /></span>
       <span class="brand">ExitcodeAgent</span>
       <span class="env-chip"><span class="dot" :class="{ pulse: Boolean(activeConnection), warn: !activeConnection }"></span>服务器加密存储</span>
     </div>
@@ -127,8 +127,12 @@ function selectModel(id: string): void {
   width: 30px;
   height: 30px;
   border-radius: var(--radius-s);
-  background: var(--accent);
-  color: #1b0d04;
+}
+
+.logo-mark img {
+  width: 30px;
+  height: 30px;
+  border-radius: 4px;
 }
 
 .brand {

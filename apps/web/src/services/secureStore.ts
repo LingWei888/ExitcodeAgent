@@ -21,6 +21,12 @@ export async function hasLocalAccount(): Promise<boolean> {
   return state.hasAccount
 }
 
+// 登录页初始化用：是否已有账号 + 当前 IP 是否需要输入图形验证码
+export async function fetchServerState(): Promise<{ hasAccount: boolean; captchaRequired: boolean }> {
+  const state = await apiRequest<{ hasAccount: boolean; captchaRequired?: boolean }>('/api/state')
+  return { hasAccount: state.hasAccount, captchaRequired: Boolean(state.captchaRequired) }
+}
+
 export async function createLocalAccount(data: VaultData, password: string): Promise<void> {
   const response = await apiRequest<SessionResponse>('/api/setup', {
     method: 'POST',
@@ -29,10 +35,14 @@ export async function createLocalAccount(data: VaultData, password: string): Pro
   setSessionToken(response.token)
 }
 
-export async function unlockLocalAccount(password: string): Promise<VaultData> {
+export async function unlockLocalAccount(
+  password: string,
+  captcha?: string,
+  captchaId?: string
+): Promise<VaultData> {
   const response = await apiRequest<SessionResponse>('/api/unlock', {
     method: 'POST',
-    body: { password }
+    body: { password, ...(captcha && captchaId ? { captcha, captchaId } : {}) }
   })
   setSessionToken(response.token)
   return response.data
@@ -47,6 +57,18 @@ export async function saveVaultData(data: VaultData): Promise<void> {
 
 export function isVaultUnlocked(): boolean {
   return Boolean(getSessionToken())
+}
+
+// 用 sessionStorage 里的令牌静默恢复会话（同一标签页刷新不锁定；新标签页无令牌需重新解锁）
+export async function restoreVaultSession(): Promise<VaultData | null> {
+  if (!getSessionToken()) return null
+  try {
+    const { data } = await apiRequest<{ data: VaultData }>('/api/vault')
+    return data
+  } catch {
+    setSessionToken(null)
+    return null
+  }
 }
 
 export function lockLocalAccount(): void {

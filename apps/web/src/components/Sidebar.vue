@@ -288,7 +288,7 @@ function requestDelete(kind: 'project' | 'session', id: string): void {
 
 .project-item.active .project-icon {
   background: var(--accent);
-  color: #1b0d04;
+  color: #ffffff;
 }
 
 .project-copy,
@@ -326,7 +326,7 @@ function requestDelete(kind: 'project' | 'session', id: string): void {
   flex: none;
   border-radius: 50%;
   background: var(--accent);
-  color: #1b0d04;
+  color: #ffffff;
 }
 
 .project-item.active .active-check {

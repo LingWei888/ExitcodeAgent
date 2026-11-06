@@ -1,25 +1,25 @@
 :root {
   color-scheme: light;
-  --bg: #fbfcfb;
-  --bg-soft: #f2f5f3;
+  --bg: #fbfbfc;
+  --bg-soft: #f3f3f6;
   --bg-raised: #ffffff;
-  --bg-inset: #e9ecea;
-  --border: rgba(28, 37, 34, 0.11);
-  --border-strong: rgba(28, 37, 34, 0.2);
-  --text: #1c2522;
-  --text-secondary: #56615c;
-  --text-muted: #8a948f;
-  --accent: #df4f1e;
-  --accent-hover: #c74415;
-  --accent-soft: rgba(223, 79, 30, 0.1);
+  --bg-inset: #ecedf1;
+  --border: rgba(24, 24, 27, 0.11);
+  --border-strong: rgba(24, 24, 27, 0.2);
+  --text: #18181b;
+  --text-secondary: #3f3f46;
+  --text-muted: #71717a;
+  --accent: #5443ba;
+  --accent-hover: #4636a3;
+  --accent-soft: rgba(84, 67, 186, 0.1);
   --teal: #0f8576;
   --teal-soft: rgba(15, 133, 118, 0.09);
   --danger: #d94343;
   --warning: #a97410;
   --radius-s: 3px;
   --radius-m: 6px;
-  --shadow-pop: 0 14px 36px rgba(28, 37, 34, 0.16);
-  --font-sans: 'IBM Plex Sans Variable', 'Aptos', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --shadow-pop: 0 14px 36px rgba(24, 24, 27, 0.16);
+  --font-sans: 'IBM Plex Sans Variable', 'Aptos', 'Segoe UI Variable', 'Segoe UI', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', 'Cascadia Code', Consolas, monospace;
 }
 
@@ -103,7 +103,7 @@ p {
   min-height: 38px;
   padding: 8px 16px;
   background: var(--accent);
-  color: #1b0d04;
+  color: #ffffff;
 }
 
 .btn-primary:hover,
