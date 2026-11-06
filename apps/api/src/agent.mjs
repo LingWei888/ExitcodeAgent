@@ -1,28 +1,42 @@
 import { resolve, sep } from 'node:path'
 import {
+  editServerFile,
+  globServerFiles,
   listServerDirectory,
   readServerFile,
   resolveServerPath,
   searchServerFiles,
   writeServerFile
 } from './files.mjs'
+import { makeGitCommitCommand, gitStatus } from './git.mjs'
 import { anthropicUrl, stripSlash, upstreamError, validateConnection } from './model.mjs'
 import { runCommand } from './command.mjs'
+import { fetchWebPage, searchWebPages } from './web.mjs'
 import { APPROVAL_TIMEOUT_MS, createApproval } from './approvals.mjs'
 
 const TOOL_LABELS = {
   list_files: '列出目录',
+  glob: '查找文件',
   read_file: '读取文件',
   write_file: '写入文件',
+  edit_file: '编辑文件',
   grep: '搜索代码',
+  web_fetch: '抓取网页',
+  web_search: '搜索网页',
+  git_status: 'Git 状态',
+  git_commit: 'Git 提交',
   delegate_task: '子任务',
   execute_command: '执行命令'
 }
 
+const WRITE_TOOLS = new Set(['write_file', 'edit_file'])
+// 需要用户批准后才真正执行、且逐个顺序派发的工具
+const APPROVED_TOOLS = new Set(['execute_command', 'git_commit'])
+
 const TOOL_DEFS = [
   {
     name: 'list_files',
-    description: '列出服务器工作区中指定目录的内容。',
+    description: '列出服务器工作区中指定目录的一层内容。',
     parameters: {
       type: 'object',
       properties: {
@@ -31,19 +45,35 @@ const TOOL_DEFS = [
     }
   },
   {
-    name: 'read_file',
-    description: '读取服务器工作区中某个文本文件的内容。',
+    name: 'glob',
+    description:
+      '按路径模式（glob）一次匹配工作区中的一整组文件/目录路径，返回匹配清单与扫描统计，自动跳过 node_modules 等依赖目录。' +
+      '示例：src/**/*.ts、**/*.vue、docs/**、*README*；**/* 表示工作区全部文件。' +
+      '探索目录结构时应优先用 glob 一次匹配，而不是逐目录反复「列出目录」。',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: '文件路径，相对于工作区' }
+        pattern: { type: 'string', description: 'glob 模式，相对工作区根，* 匹配单层任意名称，** 匹配任意层目录，支持 ?、[...]、{a,b}' }
+      },
+      required: ['pattern']
+    }
+  },
+  {
+    name: 'read_file',
+    description: '读取服务器工作区中某个文本文件的内容；大文件可用 offset/limit 只读一段行范围。',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '文件路径，相对于工作区' },
+        offset: { type: 'number', description: '可选：起始行号（从 1 开始），只显示该行及之后的内容' },
+        limit: { type: 'number', description: '可选：最多显示的行数（通常与 offset 配合使用）' }
       },
       required: ['path']
     }
   },
   {
     name: 'write_file',
-    description: '创建或覆盖写入服务器工作区中的文本文件，必要时自动创建父目录。',
+    description: '创建或覆盖写入服务器工作区中的文本文件，必要时自动创建父目录；小改动应优先用「编辑文件」定点替换。',
     parameters: {
       type: 'object',
       properties: {
@@ -54,15 +84,101 @@ const TOOL_DEFS = [
     }
   },
   {
+    name: 'edit_file',
+    description:
+      '对服务器工作区中某个文本文件做一处或多处定点文本替换（只改指定片段，文件其余内容不变），比 write_file 更适合小改动。' +
+      'edits 按顺序依次应用，每项 old_text 必须与文件现有内容精确一致（含缩进）且唯一；出现多次时应加长匹配上下文，或设置 replace_all:true。',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '文件路径，相对于工作区' },
+        edits: {
+          type: 'array',
+          description: '替换项列表，按顺序依次应用',
+          items: {
+            type: 'object',
+            properties: {
+              old_text: { type: 'string', description: '要替换的原文，须与文件内容精确一致' },
+              new_text: { type: 'string', description: '替换后的新文本' },
+              replace_all: { type: 'boolean', description: '可选：true 时替换全部出现处（仅当原文不唯一时使用），默认 false' }
+            },
+            required: ['old_text', 'new_text']
+          }
+        }
+      },
+      required: ['path', 'edits']
+    }
+  },
+  {
     name: 'grep',
-    description: '在服务器工作区中按关键词或正则搜索文件内容。',
+    description:
+      '在服务器工作区中按关键词或正则搜索文件内容，直接给出现有实现的位置；可用 glob 限定只搜索一部分文件，降低结果噪音。',
     parameters: {
       type: 'object',
       properties: {
         pattern: { type: 'string', description: '搜索关键词或正则表达式' },
-        path: { type: 'string', description: '起始目录，相对于工作区' }
+        path: { type: 'string', description: '起始目录，相对于工作区' },
+        glob: { type: 'string', description: '可选：只搜索文件名匹配该 glob 的文件，例如 src/**/*.vue' },
+        case_sensitive: { type: 'boolean', description: '可选：默认忽略大小写，true 时区分大小写' },
+        max_results: { type: 'number', description: '可选：最大结果数，默认 40，最大 200' },
+        context: { type: 'number', description: '可选：每个匹配前后各附带的上下文行数，默认 0，最大 3' }
       },
       required: ['pattern']
+    }
+  },
+  {
+    name: 'web_fetch',
+    description:
+      '抓取一个 http/https 网页的正文（自动去除 HTML 标签转成纯文本），适合查文档、看报错页面、验证配置说明。超时 15 秒，超大页面会截断。',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: '要抓取的完整 http/https 网址' },
+        detail: { type: 'string', description: '可选：为什么抓取这个页面（简要说明）' }
+      },
+      required: ['url']
+    }
+  },
+  {
+    name: 'web_search',
+    description:
+      '搜索互联网（默认 DuckDuckGo，可通过 EXITCODE_WEB_SEARCH_URL 换成 SearXNG 等 JSON API），返回标题、摘要与链接列表。用于查资料、找解决方案、验证第三方库的用法与最新版本。',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '搜索关键词，越具体越好（可带引号或语言限定）' },
+        max_results: { type: 'number', description: '可选：返回结果数，默认 8，最大 10' }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'git_status',
+    description:
+      '查看工作区的 git 仓库状态：当前分支、与上游的差异、改动文件清单（含未跟踪文件）。只读不改动任何东西；提交前、改动前后建议先看一眼。',
+    parameters: {
+      type: 'object',
+      properties: {
+        detail: { type: 'string', description: '可选：为什么要看 git 状态（简要说明）' }
+      }
+    }
+  },
+  {
+    name: 'git_commit',
+    description:
+      '把工作区改动提交为一个 git commit。生成的确切 git 命令会先请求用户批准再执行。默认只暂存已跟踪文件的修改与删除（git add -u），运行产物目录（.exitcode/）不会入库；新建的文件请用 paths 显式列出相对路径。提交前建议先用 git_status 确认范围。',
+    parameters: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: '提交说明（简要描述改了什么、为什么）' },
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '可选：要提交的工作区相对路径列表，如 ["apps/api/src/agent.mjs"]；留空则暂存全部已跟踪文件的改动'
+        },
+        detail: { type: 'string', description: '可选：为什么提交（简要说明）' }
+      },
+      required: ['message']
     }
   },
   {
@@ -100,7 +216,10 @@ const TOOL_DEFS = [
 
 const SYSTEM_PROMPT =
   '你是部署在服务器上的编码智能体。风格（重要）：像 Cursor 一样极度精简，输出最小化——不寒暄、不复述任务、不解释过程、不给代码贴标签，能短则短。' +
-  '工具：列出目录、读取文件、写入文件、搜索代码、执行命令、派发子任务；路径一律基于工作区，动手前先读取相关文件，改动保持最小。' +
+  '工具：列出目录、glob 按模式查找路径、读取文件（支持 offset/limit 分段）、编辑文件（定点替换）、写入文件、搜索代码、抓取网页、搜索网页、Git 状态、Git 提交、执行命令、派发子任务；路径一律基于工作区，动手前先读取相关文件，改动保持最小。' +
+  '探索与定位（重要）：需要了解目录结构时，优先用 glob 一次匹配一组路径（如 src/**/*.ts），不要逐目录反复「列出目录」；定位某个符号或字符串用 grep（可用 glob 参数缩小范围）；改小改动用「编辑文件」定点替换，不要整文件重写；读大文件用 offset/limit 分段读，避免一次装下 256KB。' +
+  '查资料（重要）：第三方库的文档、用法、版本、报错解法，先用 web_search 搜、再用 web_fetch 抓正文，不要凭空编造 API 或配置格式。' +
+  '动代码前后用 git_status 看分支与改动；任务中改动可阶段性用 git_commit 提交（命令会请求用户批准；新建文件要在 paths 里列路径，默认只暂存已跟踪文件的改动）。' +
   '每步行动前最多用半句话说明或直接省略，不要解释你在做什么；可并行调用多个互不依赖的工具；写文件后可读取确认。' +
   '质量优先（重要）：精简只针对文字说明，绝不减少检查步骤——改前必读、改后必验、结果必看，必要的验证一个都不能省。' +
   '需要跑 shell 命令（安装依赖、启动服务、测试、查环境）时用 execute_command，命令需用户批准；' +
@@ -125,6 +244,21 @@ const COMPACT_THRESHOLD = 56000
 const AUTOFIX_LIMIT = 2
 
 const STEP_TIMEOUT_MS = 120000
+
+// 模型限流（HTTP 429 / TPM / RPM）时按指数退避重试，避免一次限流直接中断整个任务
+const RATE_RETRY_ATTEMPTS = 3
+const RATE_RETRY_BASE_MS = 2000
+
+function wait(ms, signal) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    timer.unref?.()
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer)
+      resolve()
+    }, { once: true })
+  })
+}
 
 const DEFAULT_MAX_STEPS = Number(process.env.EXITCODE_MAX_STEPS || 16)
 const DELEGATE_MAX_STEPS = Number(process.env.EXITCODE_DELEGATE_MAX_STEPS || 10)
@@ -184,6 +318,13 @@ function formatBytes(bytes) {
 
 function describeToolCall(kind, args) {
   if (kind === 'grep') return args.pattern ? `grep: ${args.pattern}` : ''
+  if (kind === 'glob') return args.pattern ? `glob: ${args.pattern}` : ''
+  if (kind === 'edit_file') return typeof args.path === 'string' ? args.path : ''
+  if (kind === 'web_fetch') return typeof args.url === 'string' ? args.url : ''
+  if (kind === 'web_search') return args.query ? `web_search: ${args.query}` : ''
+  if (kind === 'git_commit') {
+    return typeof args.message === 'string' && args.message.trim() ? `commit: ${args.message.trim().slice(0, 40)}` : ''
+  }
   if (kind === 'delegate_task' && args.task) {
     const text = args.task.replace(/\s+/g, ' ').trim()
     return text.length > 48 ? `${text.slice(0, 48)}…` : text
@@ -247,10 +388,25 @@ async function executeTool(kind, args, workspace) {
       }
       return { ok: true, output: lines.join('\n') }
     }
+    case 'glob': {
+      const result = await globServerFiles(args.pattern, workspace)
+      if (!result.matches.length) {
+        const note = result.truncated ? '（扫描达到上限，可能仍有内容）' : ''
+        return { ok: true, output: `未匹配到任何路径：${args.pattern}${note}` }
+      }
+      const shown = result.matches.slice(0, 200)
+      const lines = [`Glob ${result.pattern} — 匹配 ${result.count} 项（扫描 ${result.scanned} 个条目，已跳过依赖目录）`]
+      for (const entry of shown) lines.push(entry)
+      if (result.truncated) lines.push('…（已达到显示上限，可能还有更多）')
+      return { ok: true, output: lines.join('\n') }
+    }
     case 'read_file': {
       const target = workspacePath(workspace, args.path)
-      const result = await readServerFile(target, workspace)
-      const output = `文件 ${result.path}\n${result.content}${result.truncated ? '\n\n（内容过长，仅显示前 256KB）' : ''}`
+      const result = await readServerFile(target, workspace, { offset: args.offset, limit: args.limit })
+      let output = `文件 ${result.path}`
+      if (result.totalLines) output += `（共 ${result.totalLines} 行，显示 ${result.offset} 行起${!args.offset && args.limit ? '（从头）' : ''}）`
+      output += `\n${result.content}`
+      if (result.truncated) output += '\n\n（文件较大，仅显示了部分内容）'
       return { ok: true, output, path: result.path }
     }
     case 'write_file': {
@@ -265,16 +421,62 @@ async function executeTool(kind, args, workspace) {
         detail: result.kind === 'created' ? `新增 ${formatBytes(result.size)}` : `修改 ${formatBytes(result.size)}`
       }
     }
+    case 'edit_file': {
+      const target = workspacePath(workspace, args.path)
+      const result = await editServerFile(target, args.edits, workspace)
+      return {
+        ok: true,
+        output: `已编辑 ${result.path}（${result.count} 处替换）`,
+        path: result.path,
+        diff: result.diff,
+        changeKind: 'modified',
+        detail: `修改 ${result.count} 处`
+      }
+    }
     case 'grep': {
       const target = workspacePath(workspace, args.path)
-      const result = await searchServerFiles(target, args.pattern, workspace)
+      const result = await searchServerFiles(target, args.pattern, workspace, {
+        glob: args.glob,
+        case_sensitive: args.case_sensitive,
+        max_results: args.max_results,
+        context: args.context
+      })
       if (!result.matches.length) {
         const note = result.truncated ? '（扫描达到上限，未发现更多内容）' : ''
         return { ok: true, output: `未找到匹配：${args.pattern}${note}` }
       }
-      const lines = result.matches.map((match) => `${match.path}:${match.lineNumber}: ${match.line}`)
+      const lines = result.matches.map((match) => {
+        const marker = match.match === true ? ':' : '>'
+        return `${match.path}:${match.lineNumber}${marker} ${match.line}`
+      })
       const note = result.truncated ? '\n\n（已达到扫描上限，结果可能不完整）' : ''
       return { ok: true, output: `匹配 ${result.count} 处\n` + lines.join('\n') + note }
+    }
+    case 'web_fetch': {
+      const result = await fetchWebPage(args.url)
+      const note = result.truncated ? '\n\n（页面较大，仅显示了前 512KB）' : ''
+      const titleLine = result.title ? `标题：${result.title}\n` : ''
+      return { ok: true, output: `${titleLine}来源：${result.finalUrl}\n\n${result.text}${note}` }
+    }
+    case 'web_search': {
+      const result = await searchWebPages(args.query, { maxResults: args.max_results })
+      if (!result.results.length) return { ok: true, output: `没有搜到关于「${args.query}」的结果，可换个关键词再试。` }
+      const lines = [`搜索「${args.query}」共 ${result.results.length} 条：`]
+      result.results.forEach((item, index) => {
+        lines.push(`${index + 1}. ${item.title}`)
+        lines.push(`   ${item.url}`)
+        if (item.snippet) lines.push(`   ${item.snippet}`)
+      })
+      return { ok: true, output: lines.join('\n') }
+    }
+    case 'git_status': {
+      const result = await gitStatus(workspace)
+      const lines = [result.head]
+      const count = result.changes.length
+      if (!count) lines.push(`（工作区干净，没有改动）`)
+      else lines.push(`工作区 ${count} 处改动：`)
+      for (const line of result.changes) lines.push(line)
+      return { ok: true, output: lines.join('\n') }
     }
     default:
       throw new Error(`不支持的工具：${kind}`)
@@ -496,20 +698,42 @@ async function* streamModelTurn(connection, messages, signal, options = {}) {
     }
   }
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), STEP_TIMEOUT_MS)
-  const onAbort = () => controller.abort()
-  if (signal?.aborted) controller.abort()
-  else signal?.addEventListener('abort', onAbort, { once: true })
+  // 限流（429）才整次重试；流中途的其它错误不重试，避免重复工具调用
+  let rateAttempt = 0
+  while (true) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), STEP_TIMEOUT_MS)
+    const onAbort = () => controller.abort()
+    if (signal?.aborted) controller.abort()
+    else signal?.addEventListener('abort', onAbort, { once: true })
 
-  try {
-    const upstream = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal })
-    if (!upstream.ok || !upstream.body) throw new Error(await upstreamError(upstream))
-    if (connection.provider === 'anthropic') yield* streamAnthropicTurn(upstream, signal, controller)
-    else yield* streamOpenAiTurn(upstream, signal, controller)
-  } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener('abort', onAbort)
+    try {
+      const upstream = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal })
+      if (upstream.status === 429 && rateAttempt < RATE_RETRY_ATTEMPTS) {
+        rateAttempt++
+        const retryAfter = Number(upstream.headers.get('retry-after') || '0')
+        const baseWait = retryAfter > 0 ? retryAfter * 1000 : RATE_RETRY_BASE_MS * 2 ** (rateAttempt - 1)
+        const delay = baseWait + Math.floor(Math.random() * 800)
+        try {
+          await upstream.body?.cancel?.()
+        } catch {
+          // 放弃 429 响应体
+        }
+        yield {
+          type: 'warning',
+          message: `模型限流（429：TPM/RPM 超限），约 ${Math.round(delay / 1000)} 秒后第 ${rateAttempt}/${RATE_RETRY_ATTEMPTS} 次重试…`
+        }
+        await wait(delay, signal)
+        continue
+      }
+      if (!upstream.ok || !upstream.body) throw new Error(await upstreamError(upstream))
+      if (connection.provider === 'anthropic') yield* streamAnthropicTurn(upstream, signal, controller)
+      else yield* streamOpenAiTurn(upstream, signal, controller)
+      return
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    }
   }
 }
 
@@ -625,6 +849,8 @@ export async function* runAgentSteps({
             if (event.reasoned) sawReasoning = true
           } else if (event.type === 'usage') {
             usage = event
+          } else if (event.type === 'warning') {
+            yield { type: 'warning', message: event.message }
           }
         }
       } catch (error) {
@@ -669,7 +895,7 @@ export async function* runAgentSteps({
     if (revision) {
       const writePaths = []
       for (const item of queued) {
-        if (item.call.name !== 'write_file' || typeof item.call.args?.path !== 'string') continue
+        if (!WRITE_TOOLS.has(item.call.name) || typeof item.call.args?.path !== 'string') continue
         try {
           writePaths.push(resolveServerPath(item.call.args.path, root))
         } catch {
@@ -704,9 +930,9 @@ export async function* runAgentSteps({
       failedTools++
     }
 
-    // 普通工具并行执行，各自完成后立刻单独下发 tool_result（命令/子任务走下方顺序派发）
+    // 普通工具并行执行，各自完成后立刻单独下发 tool_result（命令/子任务/提交走下方顺序派发）
     const regular = queued.filter(
-      (item) => item.call.name !== 'delegate_task' && item.call.name !== 'execute_command'
+      (item) => item.call.name !== 'delegate_task' && !APPROVED_TOOLS.has(item.call.name)
     )
     const tasks = regular.map((item) => async () => {
       if (signal?.aborted) return { ok: false, output: '工具执行被中断。' }
@@ -731,7 +957,7 @@ export async function* runAgentSteps({
     if (revision) {
       const writes = []
       for (const item of queued) {
-        if (item.call.name !== 'write_file') continue
+        if (!WRITE_TOOLS.has(item.call.name)) continue
         const executed = executedById.get(item.id)
         if (!executed || executed.ok === false) continue
         try {
@@ -758,13 +984,30 @@ export async function* runAgentSteps({
       yield { type: 'tool_result', tool: composed.tool }
     }
 
-    // 需要人工批准的命令顺序执行：先发审批事件等用户决议，批准后再运行
+    // 需要人工批准的命令/提交顺序执行：先发审批事件等用户决议，批准后再运行
     for (const item of queued) {
-      if (item.call.name !== 'execute_command') continue
+      if (!APPROVED_TOOLS.has(item.call.name)) continue
       if (signal?.aborted) return failures
-      const executed = yield* runCommandApproved(item.call, item.id)
-      if (executed?.ok === true) commandRan = true
-      executedById.set(item.id, executed)
+      let call = item.call
+      let cleanup = null
+      if (item.call.name === 'git_commit') {
+        const built = makeGitCommitCommand(item.call.args, root)
+        call = { ...item.call, args: { ...item.call.args, command: built.command, cwd: root } }
+        cleanup = built.cleanup
+      }
+      try {
+        const executed = yield* runCommandApproved(call, item.id)
+        if (executed?.ok === true) commandRan = true
+        executedById.set(item.id, executed)
+      } finally {
+        if (cleanup) {
+          try {
+            cleanup()
+          } catch {
+            // 清理失败忽略
+          }
+        }
+      }
       const composed = compose(item, executedById.get(item.id))
       countFailure(composed)
       yield { type: 'tool_result', tool: composed.tool }

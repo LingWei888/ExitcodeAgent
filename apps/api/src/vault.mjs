@@ -128,6 +128,24 @@ export async function unlockAccount(password) {
   return { token, data }
 }
 
+// 修改登录口令：用新口令重新加密整份数据，并使所有已登录会话失效
+export async function changePassword(oldPassword, newPassword) {
+  const record = readRecord()
+  if (!record) throw new Error('服务器还没有账号。')
+  let data
+  try {
+    data = decryptRecord(deriveKey(oldPassword, decode(record.salt)), record)
+  } catch {
+    throw new Error('原口令不正确。')
+  }
+  if (!validateVaultData(data)) throw new Error('服务器数据损坏。')
+  if (typeof newPassword !== 'string' || newPassword.length < 8) throw new Error('新口令至少 8 位。')
+  const salt = randomBytes(16)
+  await enqueueWrite(encryptRecord(deriveKey(newPassword, salt), data, salt))
+  sessions.clear() // 改密后所有会话失效，需用新口令重新解锁
+  return { ok: true }
+}
+
 export function touchSession(token) {
   const session = sessions.get(token)
   if (!session) return null

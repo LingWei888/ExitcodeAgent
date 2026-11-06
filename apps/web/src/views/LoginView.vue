@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Boxes, KeyRound, LockKeyhole, RefreshCcw, ShieldCheck } from 'lucide-vue-next'
+import { Boxes, Layers, LockKeyhole, RefreshCcw, ShieldCheck } from 'lucide-vue-next'
 import { fetchServerState } from '../services/secureStore'
 import { newCaptcha } from '../services/api'
 import { setupAccount, unlockAccount } from '../store'
@@ -108,37 +108,37 @@ async function submit(): Promise<void> {
         <span class="brand-name">ExitcodeAgent</span>
       </div>
 
-      <p class="eyebrow">服务器 加密 工作台</p>
-      <h1>一份数据，一个账号，全部留在服务器</h1>
-      <p class="lead">项目、会话、模型密钥和口令都由服务器加密保管。解锁后由服务器转发 Claude、DeepSeek 或 Ollama 请求。</p>
+      <p class="eyebrow">服务器 AI 智能体</p>
+      <h1>面向服务器的 AI 文件与运维智能体</h1>
+      <p class="lead">用自然语言管理服务器文件、排查日志、执行运维操作。项目、会话、模型密钥与口令均由服务器加密保管，模型请求由服务器转发。</p>
 
       <div class="status-matrix">
         <div class="status-cell">
+          <span class="status-icon"><Boxes :size="16" /></span>
+          <div>
+            <span class="status-label">智能文件管理</span>
+            <strong>自然语言驱动</strong>
+          </div>
+        </div>
+        <div class="status-cell">
           <span class="status-icon"><ShieldCheck :size="16" /></span>
           <div>
-            <span class="status-label">服务器存储</span>
-            <strong><span class="dot"></span> 加密保存</strong>
+            <span class="status-label">服务器操作助手</span>
+            <strong>高危二次确认</strong>
+          </div>
+        </div>
+        <div class="status-cell">
+          <span class="status-icon"><Layers :size="16" /></span>
+          <div>
+            <span class="status-label">插件化扩展</span>
+            <strong>按需扩展能力</strong>
           </div>
         </div>
         <div class="status-cell">
           <span class="status-icon"><LockKeyhole :size="16" /></span>
           <div>
-            <span class="status-label">唯一账号</span>
-            <strong>仅一个</strong>
-          </div>
-        </div>
-        <div class="status-cell">
-          <span class="status-icon"><KeyRound :size="16" /></span>
-          <div>
-            <span class="status-label">历史记录</span>
-            <strong>服务器保留</strong>
-          </div>
-        </div>
-        <div class="status-cell">
-          <span class="status-icon"><Boxes :size="16" /></span>
-          <div>
-            <span class="status-label">模型接入</span>
-            <strong>直连可用</strong>
+            <span class="status-label">安全可控</span>
+            <strong>白名单与危险拦截</strong>
           </div>
         </div>
       </div>

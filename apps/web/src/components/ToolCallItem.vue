@@ -27,12 +27,16 @@ const icon = computed(() => {
   const map = {
     read_file: FileText,
     write_file: PenLine,
+    edit_file: PenLine,
     list_files: FolderOpen,
+    glob: Search,
     grep: Search,
-    execute_command: TerminalSquare,
+    web_fetch: Globe,
+    web_search: Globe,
     git_status: GitBranch,
     git_commit: GitCommit,
-    web_fetch: Globe
+    execute_command: TerminalSquare,
+    delegate_task: GitBranch,
   }
   return map[props.tool.kind] ?? FilePlus2
 })
@@ -57,7 +61,7 @@ const progressLabel = computed(() => {
   if (props.tool.state !== 'pending') return ''
   const chars = props.tool.progressChars ?? 0
   const human = chars > 1024 ? `${(chars / 1024).toFixed(1)} KB` : `${chars} B`
-  if (props.tool.kind === 'write_file') return `正在生成文件内容（${human}）…`
+  if (props.tool.kind === 'write_file' || props.tool.kind === 'edit_file') return `正在生成文件内容（${human}）…`
   if (props.tool.kind === 'grep') return `正在理解搜索条件…`
   return `正在准备调用参数（${human}）…`
 })

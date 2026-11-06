@@ -4,10 +4,12 @@ import {
   Activity,
   Bot,
   Braces,
+  Download,
   File,
   Folder,
   FolderOpen,
   FolderPlus,
+  Package,
   RefreshCcw,
   TerminalSquare,
   X,
@@ -15,6 +17,8 @@ import {
 } from 'lucide-vue-next'
 import { currentConnection, currentProject, currentSession, store } from '../store'
 import { formatSize, listDirectory } from '../services/directory'
+import { fetchAppVersion, triggerAppUpdate } from '../services/api'
+import type { AppVersionInfo } from '../services/api'
 import type { DirectoryEntry } from '../services/directory'
 import type { Session, ToolCall } from '../types'
 import ServerDirectoryPicker from './ServerDirectoryPicker.vue'
@@ -42,12 +46,16 @@ const kindLabels: Record<string, string> = {
 const toolLabels: Record<string, string> = {
   read_file: '读取文件',
   write_file: '写入文件',
+  edit_file: '编辑文件',
   list_files: '列出文件',
+  glob: '查找文件',
   grep: '搜索代码',
-  execute_command: '执行命令',
+  web_fetch: '抓取网页',
+  web_search: '搜索网页',
   git_status: 'Git 状态',
   git_commit: 'Git 提交',
-  web_fetch: '抓取网页'
+  execute_command: '执行命令',
+  delegate_task: '子任务'
 }
 
 function kindLabel(kind: string): string {
@@ -103,6 +111,63 @@ function handleDirectorySelect(path: string): void {
 
 onMounted(refreshDirectory)
 watch(() => store.currentProjectId, refreshDirectory)
+onMounted(() => {
+  void refreshVersion(false)
+})
+
+// ——— 关于与更新 ———
+const version = ref<AppVersionInfo>({
+  current: '',
+  mode: 'dev',
+  canUpdate: false,
+  updateUrl: '',
+  latest: null,
+  updatedAt: null,
+  updateAvailable: false,
+  checkedAt: null,
+  checkFailed: false
+})
+const versionBusy = ref(false)
+const updating = ref(false)
+const updateMsg = ref('')
+const updateError = ref(false)
+
+const canUpdateNow = computed(
+  () => !versionBusy.value && !updating.value && version.value.canUpdate && version.value.updateAvailable
+)
+
+async function refreshVersion(force = false): Promise<void> {
+  if (versionBusy.value) return
+  versionBusy.value = true
+  updateMsg.value = ''
+  updateError.value = false
+  try {
+    version.value = await fetchAppVersion(force)
+  } catch (cause) {
+    updateMsg.value = cause instanceof Error ? cause.message : '检查更新失败。'
+    updateError.value = true
+  } finally {
+    versionBusy.value = false
+  }
+}
+
+async function doUpdate(): Promise<void> {
+  if (updating.value) return
+  if (!window.confirm(`确认更新到 v${version.value.latest}？更新过程中服务会短暂重启，请稍等片刻。`)) return
+  updating.value = true
+  updateMsg.value = ''
+  updateError.value = false
+  try {
+    const result = await triggerAppUpdate()
+    updateMsg.value = result.message
+    updateError.value = !result.updated
+  } catch (cause) {
+    updateError.value = true
+    updateMsg.value = cause instanceof Error ? cause.message : '更新失败。'
+  } finally {
+    updating.value = false
+  }
+}
 </script>
 
 <template>
@@ -241,6 +306,34 @@ watch(() => store.currentProjectId, refreshDirectory)
           </div>
           <p class="empty-connect">密钥由服务器保管，配置后即可使用。</p>
           <button class="connect-btn" type="button" @click="store.showSettings = true">添加模型</button>
+        </div>
+      </section>
+
+      <section class="drawer-section">
+        <div class="section-title"><Package :size="14" /><span>关于与更新</span></div>
+        <div class="version-card">
+          <div class="version-row"><span>当前版本</span><code>{{ version.current || '—' }}</code></div>
+          <template v-if="version.latest">
+            <div class="version-row"><span>最新版本</span><code>{{ version.latest }}</code></div>
+            <div v-if="version.updateAvailable" class="version-result update">发现新版本，可一键更新</div>
+            <div v-else class="version-result">已是最新版本</div>
+          </template>
+          <div v-else-if="version.checkFailed" class="version-result warn">
+            无法连接更新服务器（{{ version.updateUrl }}）
+          </div>
+          <div v-if="!version.current" class="version-result warn">正在获取版本信息…</div>
+          <div v-if="!version.canUpdate && version.current" class="version-result warn">开发模式不支持网页更新，请用安装脚本更新</div>
+          <div v-if="updateMsg" class="version-result" :class="updateError ? 'warn' : 'update'">{{ updateMsg }}</div>
+          <div class="version-actions">
+            <button class="pick-btn version-btn" type="button" :disabled="versionBusy || updating" @click="refreshVersion(true)">
+              <RefreshCcw :size="14" :class="{ spinning: versionBusy }" />
+              检查更新
+            </button>
+            <button class="version-update-btn" type="button" :disabled="!canUpdateNow" @click="doUpdate">
+              <Download :size="14" />
+              {{ updating ? '更新中…' : '立即更新' }}
+            </button>
+          </div>
         </div>
       </section>
     </div>
@@ -441,6 +534,9 @@ watch(() => store.currentProjectId, refreshDirectory)
   flex-direction: column;
   gap: 2px;
   margin-top: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .dir-entry {
@@ -489,6 +585,9 @@ watch(() => store.currentProjectId, refreshDirectory)
   display: flex;
   flex-direction: column;
   gap: 3px;
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .file-row {
@@ -553,6 +652,9 @@ watch(() => store.currentProjectId, refreshDirectory)
   display: flex;
   flex-direction: column;
   gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .cmd-row {
@@ -701,6 +803,73 @@ watch(() => store.currentProjectId, refreshDirectory)
   font-size: 10px;
 }
 
+.version-card {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--bg-inset);
+}
+
+.version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.version-row code {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.version-result {
+  margin-top: 6px;
+  color: var(--teal);
+  font-size: 11px;
+}
+
+.version-result.warn {
+  color: #b97727;
+}
+
+.version-result.update {
+  color: var(--teal);
+}
+
+.version-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.version-update-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid var(--teal);
+  border-radius: var(--radius-s);
+  background: var(--teal);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.version-update-btn:hover:not(:disabled) {
+  background: var(--teal-strong, var(--teal));
+}
+
+.version-update-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .link-line {
   display: inline-flex;
   align-items: center;
@@ -720,7 +889,7 @@ watch(() => store.currentProjectId, refreshDirectory)
   .drawer {
     position: fixed;
     inset: 52px 0 0 auto;
-    z-index: 30;
+    z-index: 32;
     height: calc(100% - 52px);
     box-shadow: var(--shadow-pop);
   }

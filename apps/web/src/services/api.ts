@@ -191,3 +191,26 @@ export async function newCaptcha(): Promise<string> {
   const { captchaId } = await apiRequest<{ captchaId: string }>('/api/captcha/new')
   return captchaId
 }
+
+export interface AppVersionInfo {
+  current: string
+  mode: 'release' | 'dev'
+  canUpdate: boolean
+  updateUrl: string
+  latest: string | null
+  updatedAt: string | null
+  updateAvailable: boolean
+  checkedAt: number | null
+  checkFailed: boolean
+}
+
+export async function fetchAppVersion(force = false): Promise<AppVersionInfo> {
+  return apiRequest<AppVersionInfo>(`/api/version${force ? '?force=1' : ''}`)
+}
+
+export async function triggerAppUpdate(): Promise<{ updated: boolean; message: string }> {
+  return apiRequest<{ updated: boolean; message: string }>('/api/update', {
+    method: 'POST',
+    body: { confirm: true }
+  })
+}

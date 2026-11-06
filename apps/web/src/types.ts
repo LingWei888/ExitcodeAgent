@@ -1,12 +1,16 @@
 export type ToolKind =
   | 'read_file'
   | 'write_file'
+  | 'edit_file'
   | 'list_files'
+  | 'glob'
   | 'grep'
-  | 'execute_command'
+  | 'web_fetch'
+  | 'web_search'
   | 'git_status'
   | 'git_commit'
-  | 'web_fetch'
+  | 'execute_command'
+  | 'delegate_task'
 
 export type ToolState = 'pending' | 'running' | 'waiting' | 'done'
 

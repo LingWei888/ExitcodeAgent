@@ -30,3 +30,13 @@ TypeScript build cache
 
 # Server data
 apps/api/data/
+
+# 智能体运行产物（命令日志、临时提交信息等）
+.exitcode/
+
+# 发布产物
+tools/release/
+
+# 上传到 exitcode.cn 的文件不入库（单独发布）；需要入库时用 git add -f
+deploy/install.sh
+deploy/install.ps1

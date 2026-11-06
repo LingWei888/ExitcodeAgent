@@ -94,7 +94,7 @@ function upsertTool(message: Message, tool: ToolCall): void {
 }
 
 function recordFileChange(tool: ToolCall): void {
-  if (tool.kind !== 'write_file' || !tool.path) return
+  if ((tool.kind !== 'write_file' && tool.kind !== 'edit_file') || !tool.path) return
   const kind = tool.changeKind === 'created' ? 'created' : 'modified'
   const summary = tool.detail || tool.output?.split('\n')[0] || '已更新'
   session.value.filesChanged = session.value.filesChanged.filter((item) => item.path !== tool.path)

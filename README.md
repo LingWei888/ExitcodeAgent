@@ -88,3 +88,59 @@ apps/
 ## 许可
 
 MIT
+
+## 一键安装与在线更新（类似宝塔）
+
+服务器只需 Node.js ≥ 20（缺失或过低时脚本会**询问后自动下载便携版 Node**，回车即同意；
+可用 `NODE_ASSUME_YES=1` 跳过询问）。安装脚本会：检测环境 → 随机选择端口（20000-59999，避免被扫描）
+→ 生成自签名证书（默认 HTTPS）→ 下载发布包并校验 SHA256 → 启动服务 → 打印访问地址。
+
+Node 下载默认走国内镜像（npmmirror），失败自动回退 nodejs.org；内网/离线环境可把 Node 官方包放到
+自己的站点后用 `NODE_MIRROR` 指定，例如 `NODE_MIRROR=https://exitcode.cn/node bash install.sh`。
+
+**Linux（或 Windows Git Bash）：**
+
+```bash
+URL=https://exitcode.cn/install.sh && if [ -f /usr/bin/curl ];then curl -sSO "$URL";else wget -O install.sh "$URL";fi;bash install.sh
+```
+
+**Windows（原生 PowerShell）：**
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest https://exitcode.cn/install.ps1 -OutFile install.ps1; .\install.ps1"
+```
+
+**在线更新**（保留数据/配置/证书，仅替换程序并重启）：
+
+```bash
+bash install.sh update
+powershell -ExecutionPolicy Bypass -File install.ps1 update
+```
+
+其他命令：`status` / `logs` / `stop` / `start`。
+
+### 发布
+
+```bash
+pnpm build:web
+node tools/build-release.mjs 0.1.0
+```
+
+把 `tools/release/` 下的 `exitcode-<版本>.tar.gz` 与 `version.json` 上传到
+`https://exitcode.cn/releases/`；`deploy/install.sh`、`deploy/install.ps1` 上传到
+`https://exitcode.cn/` 根目录（即 /install.sh、/install.ps1）。更新时只需上传新版本号的新包 + 新版
+`version.json`，用户执行 `update` 即可平滑升级。可用 `BASE_URL` 环境变量指向自定义镜像地址。
+
+## 服务器管理命令（exitcode）
+
+安装脚本会生成 `exitcode` 命令（Linux 装到 /usr/local/bin；Windows Git Bash 装到 ~/bin），支持：
+
+```bash
+exitcode -v                 # 查看版本
+exitcode help               # 帮助（含作者：零微，反馈 lwei10036@gmail.com）
+exitcode start|stop|restart|status|logs|autostart on|off|update
+exitcode changepw           # 修改登录口令（交互式输入新旧口令，改后所有会话失效）
+```
+
+开机自启动：Linux（systemd）安装即默认开启；Windows 写入用户登录启动项，可用
+`exitcode autostart off` 关闭。端口为随机高端口，默认 HTTPS（自签名证书）。

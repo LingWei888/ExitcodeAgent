@@ -1,10 +1,12 @@
 import { createServer } from 'node:http'
-import { existsSync } from 'node:fs'
+import { createServer as createHttpsServer } from 'node:https'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   hasAccount,
+  changePassword,
   lockSession,
   saveSessionData,
   setupAccount,
@@ -18,6 +20,7 @@ import { runAgentSteps } from './agent.mjs'
 import { createRevision } from './revision.mjs'
 import { isApprovalOwner, resolveApproval } from './approvals.mjs'
 import { captchaSvg, createCaptcha, getCaptchaCode, verifyCaptcha } from './captcha.mjs'
+import { getVersionStatus, performUpdate } from './update.mjs'
 import {
   ipBlockWaitMs,
   ipFailures,
@@ -28,7 +31,11 @@ import {
 } from './security.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const WEB_DIST = resolve(here, '..', '..', 'web', 'dist')
+// 兼容两种目录布局：研发仓库 apps/api/src -> ../../web/dist；发布包 src/ -> ../dist
+const WEB_DIST =
+  [resolve(here, '..', '..', 'web', 'dist'), resolve(here, '..', 'dist')].find((dir) =>
+    existsSync(join(dir, 'index.html'))
+  ) ?? resolve(here, '..', '..', 'web', 'dist')
 const PORT = Number(process.env.PORT || 8787)
 const HOST = process.env.HOST || '0.0.0.0'
 
@@ -110,7 +117,8 @@ function defaultVaultData(name) {
   }
 }
 
-async function routeApi(req, res, pathname) {
+async function routeApi(req, res, url) {
+  const pathname = url.pathname
   const isGet = req.method === 'GET'
   const isPost = req.method === 'POST'
   const isPut = req.method === 'PUT'
@@ -200,6 +208,24 @@ async function routeApi(req, res, pathname) {
 
   const auth = isGet || isPost || isPut ? requireSession(req, res) : null
   if (!auth) return
+
+  if (isGet && pathname === '/api/version') {
+    const force = url.searchParams.get('force') === '1'
+    sendJson(res, 200, await getVersionStatus(force))
+    return
+  }
+
+  if (isPost && pathname === '/api/update') {
+    const body = await readJson(req)
+    if (body.confirm !== true) throw new Error('在线更新需要显式确认（confirm: true）。')
+    const result = await performUpdate()
+    sendJson(res, 200, result)
+    if (result.updated) {
+      // 更新脚本已在后台接管：先应答前端，再让本进程退出，由脚本换文件并重启
+      setTimeout(() => process.exit(0), 800).unref()
+    }
+    return
+  }
 
   if (isGet && pathname === '/api/vault') {
     sendJson(res, 200, { data: auth.session.data })
@@ -314,6 +340,13 @@ async function routeApi(req, res, pathname) {
       sendJson(res, 404, { error: '审批不存在或已处理。' })
       return
     }
+    sendJson(res, 200, { ok: true })
+    return
+  }
+
+  if (isPost && pathname === '/api/account/password') {
+    const body = await readJson(req)
+    await changePassword(String(body.oldPassword || ''), String(body.newPassword || ''))
     sendJson(res, 200, { ok: true })
     return
   }
@@ -466,11 +499,11 @@ async function serveStatic(req, res, pathname) {
   }
 }
 
-const server = createServer(async (req, res) => {
+const handler = async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
     if (url.pathname.startsWith('/api/')) {
-      await routeApi(req, res, url.pathname)
+      await routeApi(req, res, url)
     } else {
       await serveStatic(req, res, url.pathname)
     }
@@ -479,10 +512,27 @@ const server = createServer(async (req, res) => {
     if (!res.headersSent) sendJson(res, 500, { error: error instanceof Error ? error.message : '服务器错误。' })
     else res.end()
   }
-})
+}
+
+// HTTPS：提供 EXITCODE_TLS_CERT / EXITCODE_TLS_KEY（PEM 文件路径）时以 https 监听，否则回退 http
+const TLS_CERT = process.env.EXITCODE_TLS_CERT
+const TLS_KEY = process.env.EXITCODE_TLS_KEY
+let server
+try {
+  if (TLS_CERT && TLS_KEY) {
+    server = createHttpsServer({ key: readFileSync(TLS_KEY), cert: readFileSync(TLS_CERT) }, handler)
+  } else {
+    server = createServer(handler)
+  }
+} catch (error) {
+  console.error('[exitcode-api] TLS 证书读取失败：', error instanceof Error ? error.message : error)
+  process.exit(1)
+}
 
 server.listen(PORT, HOST, () => {
-  console.log(`ExitcodeAgent server listening on http://${HOST}:${PORT}`)
+  console.log(
+    `ExitcodeAgent server listening on ${TLS_CERT && TLS_KEY ? 'https' : 'http'}://${HOST}:${PORT}`
+  )
   console.log(existsSync(WEB_DIST) ? `Serving frontend from ${WEB_DIST}` : 'Frontend dist not built yet.')
 })
 

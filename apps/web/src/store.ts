@@ -236,13 +236,13 @@ export function deleteSession(id: string): void {
   }
 }
 
-// 由剩余消息的 write_file 工具调用重建文件变更清单（最新在前）
+// 由剩余消息的 write_file / edit_file 工具调用重建文件变更清单（最新在前）
 export function filesChangedFromMessages(messages: Message[]): FileChange[] {
   const list: FileChange[] = []
   const seen = new Set<string>()
   for (let i = messages.length - 1; i >= 0; i--) {
     for (const tool of messages[i].tools ?? []) {
-      if (tool.kind !== 'write_file' || !tool.path || seen.has(tool.path)) continue
+      if ((tool.kind !== 'write_file' && tool.kind !== 'edit_file') || !tool.path || seen.has(tool.path)) continue
       seen.add(tool.path)
       list.push({
         path: tool.path,
