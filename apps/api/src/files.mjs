@@ -5,7 +5,7 @@ import { dirname, resolve, sep } from 'node:path'
 const workspaceRoot = process.env.EXITCODE_WORKSPACE_ROOT ? resolve(process.env.EXITCODE_WORKSPACE_ROOT) : null
 const MAX_TOOL_READ_BYTES = 256 * 1024
 const MAX_SEARCH_SCAN_BYTES = 32 * 1024 * 1024
-const IGNORED_DIRS = new Set(['.git', '.svn', '.hg', 'node_modules', 'dist', 'build', 'coverage', '.cache', '.next', '.venv', 'vendor', 'tmp', '.tmp'])
+const IGNORED_DIRS = new Set(['.git', '.svn', '.hg', 'node_modules', 'dist', 'build', 'coverage', '.cache', '.next', '.venv', 'vendor', 'tmp', '.tmp', '.exitcode'])
 
 const yieldLoop = () => new Promise((resolve) => setImmediate(resolve))
 

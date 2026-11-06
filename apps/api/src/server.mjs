@@ -16,6 +16,16 @@ import { listServerDirectory } from './files.mjs'
 import { listModels, streamModelToClient, testModel } from './model.mjs'
 import { runAgentSteps } from './agent.mjs'
 import { createRevision } from './revision.mjs'
+import { isApprovalOwner, resolveApproval } from './approvals.mjs'
+import { captchaSvg, createCaptcha, getCaptchaCode, verifyCaptcha } from './captcha.mjs'
+import {
+  ipBlockWaitMs,
+  ipFailures,
+  isAccountLocked,
+  isIpBlocked,
+  recordIpFailure,
+  recordTotalFailure
+} from './security.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const WEB_DIST = resolve(here, '..', '..', 'web', 'dist')
@@ -66,6 +76,11 @@ function bearerToken(req) {
   return header.startsWith('Bearer ') ? header.slice(7) : ''
 }
 
+function clientIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+  return forwarded || (req.socket && req.socket.remoteAddress) || ''
+}
+
 // 通过会话 id 找到它所属项目的工作区目录；找不到返回空字符串
 function sessionWorkspace(sessionData, sessionId) {
   const project = (sessionData?.projects ?? []).find((p) => (p?.sessionIds ?? []).includes(sessionId))
@@ -76,7 +91,7 @@ function requireSession(req, res) {
   const token = bearerToken(req)
   const session = token ? touchSession(token) : null
   if (!session) {
-    sendJson(res, 401, { error: '账号已锁定，请重新解锁。' })
+    sendJson(res, 401, { error: '登录已过期或已锁定，请重新解锁。' })
     return null
   }
   return { token, session }
@@ -101,7 +116,32 @@ async function routeApi(req, res, pathname) {
   const isPut = req.method === 'PUT'
 
   if (isGet && pathname === '/api/state') {
-    sendJson(res, 200, { hasAccount: hasAccount(), unlocked: unlockedCount() > 0 })
+    sendJson(res, 200, {
+      hasAccount: hasAccount(),
+      unlocked: unlockedCount() > 0,
+      captchaRequired: ipFailures(clientIp(req)) > 0
+    })
+    return
+  }
+
+  if (isGet && pathname === '/api/captcha/new') {
+    sendJson(res, 200, { captchaId: createCaptcha() })
+    return
+  }
+
+  const CAPTCHA_PREFIX = '/api/captcha/'
+  if (isGet && pathname.startsWith(CAPTCHA_PREFIX)) {
+    const id = pathname.slice(CAPTCHA_PREFIX.length).replace(/[^a-zA-Z0-9-]/g, '')
+    const code = getCaptchaCode(id)
+    if (!code) {
+      sendJson(res, 404, { error: '验证码不存在或已过期，请刷新后重试。' })
+      return
+    }
+    res.writeHead(200, {
+      'content-type': 'image/svg+xml; charset=utf-8',
+      'cache-control': 'no-store, no-cache, must-revalidate'
+    })
+    res.end(captchaSvg(code))
     return
   }
 
@@ -121,9 +161,33 @@ async function routeApi(req, res, pathname) {
   }
 
   if (isPost && pathname === '/api/unlock') {
+    const ip = clientIp(req)
+    if (isAccountLocked()) {
+      sendJson(res, 423, { error: '密码尝试次数过多，账号已锁定，暂时无法登录。' })
+      return
+    }
+    if (isIpBlocked(ip)) {
+      const waitMin = Math.max(1, Math.ceil(ipBlockWaitMs(ip) / 60000))
+      sendJson(res, 429, { error: `该 IP 尝试次数过多，请 ${waitMin} 分钟后再试。` })
+      return
+    }
     const body = await readJson(req)
-    const result = await unlockAccount(String(body.password || ''))
-    sendJson(res, 200, result)
+    // 该 IP 在当前周期内有过失败后，才要求图形验证码
+    if (ipFailures(ip) > 0 && !verifyCaptcha(body.captchaId, body.captcha)) {
+      sendJson(res, 401, { error: '图形验证码错误，请重试。', captchaRequired: true, captchaId: createCaptcha() })
+      return
+    }
+    try {
+      const result = await unlockAccount(String(body.password || ''))
+      sendJson(res, 200, result)
+    } catch (error) {
+      recordIpFailure(ip)
+      if (recordTotalFailure()) {
+        sendJson(res, 423, { error: '密码尝试次数过多，账号已锁定，暂时无法登录。' })
+        return
+      }
+      sendJson(res, 401, { error: '口令不正确，请重试。', captchaRequired: true, captchaId: createCaptcha() })
+    }
     return
   }
 
@@ -213,7 +277,8 @@ async function routeApi(req, res, pathname) {
         turns: body.turns,
         workspace,
         signal: controller.signal,
-        revision
+        revision,
+        approvalToken: auth.token
       })) {
         if (res.destroyed) break
         res.write(`data: ${JSON.stringify(event)}\n\n`)
@@ -233,6 +298,23 @@ async function routeApi(req, res, pathname) {
       req.removeListener('close', onClose)
       res.removeListener('close', onClose)
     }
+    return
+  }
+
+  if (isPost && pathname === '/api/agent/approve') {
+    const body = await readJson(req)
+    const approvalId = String(body.approvalId || '')
+    if (!approvalId) throw new Error('缺少审批编号。')
+    if (!isApprovalOwner(approvalId, auth.token)) {
+      sendJson(res, 403, { error: '审批不存在或不属于当前账号。' })
+      return
+    }
+    const ok = resolveApproval(approvalId, body.approve === true)
+    if (!ok) {
+      sendJson(res, 404, { error: '审批不存在或已处理。' })
+      return
+    }
+    sendJson(res, 200, { ok: true })
     return
   }
 

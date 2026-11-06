@@ -7,13 +7,16 @@ import {
   writeServerFile
 } from './files.mjs'
 import { anthropicUrl, stripSlash, upstreamError, validateConnection } from './model.mjs'
+import { runCommand } from './command.mjs'
+import { APPROVAL_TIMEOUT_MS, createApproval } from './approvals.mjs'
 
 const TOOL_LABELS = {
   list_files: '列出目录',
   read_file: '读取文件',
   write_file: '写入文件',
   grep: '搜索代码',
-  delegate_task: '子任务'
+  delegate_task: '子任务',
+  execute_command: '执行命令'
 }
 
 const TOOL_DEFS = [
@@ -74,26 +77,45 @@ const TOOL_DEFS = [
       },
       required: ['task']
     }
+  },
+  {
+    name: 'execute_command',
+    description:
+      '在服务器工作区的终端里执行一条 shell 命令（例如安装依赖、启动服务、运行测试）。执行前会请求用户批准，批准后才会真正运行。后台运行（background:true，适合 npm run dev 等常驻进程）会立即返回 PID、日志文件路径与启动初期输出，不受超时限制；启动后请用「读取文件」查看日志确认结果（日志可能延迟出现，等待数秒后重读）。命令对文件的改动不会纳入按轮回滚。',
+    parameters: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: '要在终端执行的完整命令' },
+        cwd: { type: 'string', description: '可选：执行目录，相对工作区，默认工作区根目录' },
+        detail: { type: 'string', description: '可选：为什么执行这条命令（简要说明）' },
+        background: {
+          type: 'boolean',
+          description: '可选：true 时在后台常驻运行并立即返回（适合 dev server 等不结束的进程），默认 false 等待命令结束'
+        }
+      },
+      required: ['command']
+    }
   }
 ]
 
 const SYSTEM_PROMPT =
-  '你是部署在服务器上的编码智能体。你可以列出目录、读取文件、写入文件和搜索代码，工具路径必须基于工作区。' +
-  '动手修改前先读取相关文件，保持改动最小，不要破坏无关代码。' +
-  '每执行一步之前，用一两句中文说明你正在做什么；写文件后应继续读取或检查以避免错误。' +
-  '同一时间可以并行调用多个独立工具；遇到可独立拆分的子任务（如修改多个互不相关的文件、单独调研一段实现），' +
-  '用 delegate_task 交给子代理并行处理，并在父任务中继续推进其它工作。' +
-  '只有在任务真正完成（修改完成、结果验证过）之后才给出最终总结，否则继续使用工具推进任务。' +
-  '最终用中文简要说明你做了什么、改动哪些文件以及验证结果。'
+  '你是部署在服务器上的编码智能体。风格（重要）：像 Cursor 一样极度精简，输出最小化——不寒暄、不复述任务、不解释过程、不给代码贴标签，能短则短。' +
+  '工具：列出目录、读取文件、写入文件、搜索代码、执行命令、派发子任务；路径一律基于工作区，动手前先读取相关文件，改动保持最小。' +
+  '每步行动前最多用半句话说明或直接省略，不要解释你在做什么；可并行调用多个互不依赖的工具；写文件后可读取确认。' +
+  '质量优先（重要）：精简只针对文字说明，绝不减少检查步骤——改前必读、改后必验、结果必看，必要的验证一个都不能省。' +
+  '需要跑 shell 命令（安装依赖、启动服务、测试、查环境）时用 execute_command，命令需用户批准；' +
+  '启动 npm run dev 这类常驻命令务必 background:true（后台启动后立刻用「读取文件」查看返回的日志路径确认；日志可能延迟几秒，等 2-3 秒重读最多 3 次，为空不代表失败，看到 Local:/端口/监听成功才算成功；不要用 start /b 等技巧）。' +
+  '独立子任务用 delegate_task 交给子代理并行推进。' +
+  '任务真正完成后才输出总结，最多 2-3 行要点式：改了什么 + 验证结果，如「新增 src/app.ts; npm run build 通过」；未完成前继续用工具推进，绝不提前总结。'
 
 const PLAN_SYSTEM_HINT =
   '\n\n请先不要执行任何工具，也不要输出其它文字。请分析用户任务，输出一个执行计划，格式必须是合法的 JSON 数组，' +
-  '每一项为 {"id":"p1","title":"用一句中文描述要做的动作"}，共 3-8 项，按依赖顺序排列，不要使用 markdown 代码块。'
+  '每一项为 {"id":"p1","title":"≤10 字的中文动作描述"}，共 3-8 项，按依赖顺序排列，不要使用 markdown 代码块。'
 
 const VERIFY_SYSTEM_HINT =
   '\n\n请严格检查你刚才的工作是否真正完成了用户请求：重新确认关键文件内容、验证改动正确性。' +
   '如果仍有必要操作（读取文件确认、写文件修正、搜索验证），请继续调用工具完成它们；' +
-  '只有确认全部完成时才输出简短总结，说明做了什么、改动了哪些文件、验证结果。'
+  '确认全部完成后才输出总结，最多 2 行要点：改了什么 + 验证结果。'
 
 const COMPACT_SYSTEM_HINT =
   '\n\n请把下面这段历史对话压缩成精炼的中文摘要。保留：已修改的文件与改动要点、关键路径、当前进度、剩余未完成事项。' +
@@ -103,6 +125,9 @@ const COMPACT_THRESHOLD = 56000
 const AUTOFIX_LIMIT = 2
 
 const STEP_TIMEOUT_MS = 120000
+
+const DEFAULT_MAX_STEPS = Number(process.env.EXITCODE_MAX_STEPS || 16)
+const DELEGATE_MAX_STEPS = Number(process.env.EXITCODE_DELEGATE_MAX_STEPS || 10)
 
 function workspacePath(workspace, inputPath) {
   const root = resolve(workspace)
@@ -162,6 +187,10 @@ function describeToolCall(kind, args) {
   if (kind === 'delegate_task' && args.task) {
     const text = args.task.replace(/\s+/g, ' ').trim()
     return text.length > 48 ? `${text.slice(0, 48)}…` : text
+  }
+  if (kind === 'execute_command') {
+    const text = typeof args.command === 'string' ? args.command.replace(/\s+/g, ' ').trim() : ''
+    return text.length > 60 ? `${text.slice(0, 60)}…` : text
   }
   const path = args.path ?? ''
   return path
@@ -488,11 +517,12 @@ export async function* runAgentSteps({
   connection,
   turns,
   workspace,
-  maxSteps = 16,
+  maxSteps = DEFAULT_MAX_STEPS,
   signal,
   subagent = false,
   revision = null,
-  runId = null
+  runId = null,
+  approvalToken = null
 }) {
   if (!workspace || typeof workspace !== 'string' || !workspace.trim()) throw new Error('会话没有关联服务器工作区。')
   const root = resolve(workspace.trim())
@@ -517,6 +547,7 @@ export async function* runAgentSteps({
   let totalInput = 0
   let totalOutput = 0
   let failedTools = 0
+  let commandRan = false
   let step = 0
   let planItems = null
   let verifiedOnce = false
@@ -673,8 +704,10 @@ export async function* runAgentSteps({
       failedTools++
     }
 
-    // 普通工具并行执行，各自完成后立刻单独下发 tool_result
-    const regular = queued.filter((item) => item.call.name !== 'delegate_task')
+    // 普通工具并行执行，各自完成后立刻单独下发 tool_result（命令/子任务走下方顺序派发）
+    const regular = queued.filter(
+      (item) => item.call.name !== 'delegate_task' && item.call.name !== 'execute_command'
+    )
     const tasks = regular.map((item) => async () => {
       if (signal?.aborted) return { ok: false, output: '工具执行被中断。' }
       try {
@@ -725,6 +758,18 @@ export async function* runAgentSteps({
       yield { type: 'tool_result', tool: composed.tool }
     }
 
+    // 需要人工批准的命令顺序执行：先发审批事件等用户决议，批准后再运行
+    for (const item of queued) {
+      if (item.call.name !== 'execute_command') continue
+      if (signal?.aborted) return failures
+      const executed = yield* runCommandApproved(item.call, item.id)
+      if (executed?.ok === true) commandRan = true
+      executedById.set(item.id, executed)
+      const composed = compose(item, executedById.get(item.id))
+      countFailure(composed)
+      yield { type: 'tool_result', tool: composed.tool }
+    }
+
     const results = []
     for (const item of queued) {
       const executed = executedById.get(item.id) ?? { ok: false, output: '工具执行被中断。' }
@@ -737,6 +782,46 @@ export async function* runAgentSteps({
     return failures
   }
 
+  // 命令审批与执行：发 approval 事件 → 等用户决议 → 批准后 runCommand；拒绝/超时/中断返回失败
+  async function* runCommandApproved(call, id) {
+    const command = typeof call.args?.command === 'string' ? call.args.command.trim() : ''
+    if (!command) return { ok: false, output: '命令为空，未执行。' }
+    let cwd = root
+    if (typeof call.args?.cwd === 'string' && call.args.cwd.trim()) {
+      try {
+        cwd = workspacePath(root, call.args.cwd)
+      } catch (error) {
+        return { ok: false, output: error instanceof Error ? error.message : '命令目录无效。' }
+      }
+    }
+    const { id: approvalId, promise } = createApproval({ command, cwd, token: approvalToken, signal })
+    yield {
+      type: 'approval',
+      approvalId,
+      toolId: id,
+      command,
+      cwd,
+      detail: typeof call.args?.detail === 'string' ? call.args.detail : '',
+      time: Date.now(),
+      timeoutMs: APPROVAL_TIMEOUT_MS
+    }
+    yield { type: 'tool', tool: { id, kind: 'execute_command', title: '执行命令', command, state: 'waiting' } }
+    let approved = false
+    try {
+      await promise
+      approved = true
+    } catch (error) {
+      return { ok: false, output: error instanceof Error ? error.message : '命令未执行。' }
+    }
+    if (!approved || signal?.aborted) return { ok: false, output: '命令执行被中断。' }
+    const background = call.args?.background === true
+    yield {
+      type: 'tool',
+      tool: { id, kind: 'execute_command', title: background ? '后台执行命令' : '执行命令', command, state: 'running' }
+    }
+    return await runCommand(command, { cwd, signal, background })
+  }
+
   // 把独立子任务派发给子代理执行（子代理有自己独立的执行循环，工具事件会实时转发）
   async function* runSubagent(call, id) {
     let report = ''
@@ -747,11 +832,12 @@ export async function* runAgentSteps({
         connection,
         turns: [{ role: 'user', content: String(call.args?.task ?? '') }],
         workspace: root,
-        maxSteps: 6,
+        maxSteps: DELEGATE_MAX_STEPS,
         signal,
         subagent: true,
         revision,
-        runId: bound
+        runId: bound,
+        approvalToken
       })) {
         if (signal?.aborted) return { ok: false, output: '子任务被中断。' }
         if (event.type === 'usage') {
@@ -766,6 +852,7 @@ export async function* runAgentSteps({
           event.type === 'tool_pending' ||
           event.type === 'tool_progress' ||
           event.type === 'tool_result' ||
+          event.type === 'approval' ||
           event.type === 'warning' ||
           event.type === 'error'
         ) {
@@ -790,6 +877,12 @@ export async function* runAgentSteps({
   function* finishDone() {
     if (failedTools > 0) {
       yield { type: 'warning', message: `${failedTools} 个工具执行失败，部分操作可能没有完成，请查看上方工具输出。` }
+    }
+    if (commandRan && !subagent) {
+      yield {
+        type: 'warning',
+        message: '本轮执行过命令，命令对文件的改动不纳入按轮回滚；如需还原请手动处理。'
+      }
     }
     yield* markPlanAllDone()
     if (!subagent) {
@@ -886,7 +979,7 @@ export async function* runAgentSteps({
     if (signal?.aborted) return
     step++
     if (!subagent) {
-      yield { type: 'step', index: step }
+      yield { type: 'step', index: step, total: maxSteps }
       yield { type: 'phase', phase: 'executing', label: `正在执行第 ${step} 个回合…` }
     }
     yield* markPlan('running')
@@ -962,6 +1055,9 @@ export async function* runAgentSteps({
     const failedInTurn = yield* runTools(calls)
     if (failedInTurn > 0 && autoFixRemaining > 0) {
       autoFixRemaining--
+      if (!subagent) {
+        yield { type: 'phase', phase: 'fixing', label: `正在自动修复失败的 ${failedInTurn} 个工具…` }
+      }
       yield { type: 'warning', message: `${failedInTurn} 个工具执行失败，正在自动尝试修复（剩余 ${autoFixRemaining} 次自动修复机会）…` }
       messages.push({
         role: 'user',
@@ -976,6 +1072,12 @@ export async function* runAgentSteps({
   // 达到回合上限
   if (failedTools > 0) {
     yield { type: 'warning', message: `${failedTools} 个工具执行失败，部分操作可能没有完成，请查看上方工具输出。` }
+  }
+  if (commandRan && !subagent) {
+    yield {
+      type: 'warning',
+      message: '本轮执行过命令，命令对文件的改动不纳入按轮回滚；如需还原请手动处理。'
+    }
   }
   yield { type: 'warning', message: `已达到最大回合数（${maxSteps}），任务可能尚未完全结束，建议缩小范围或分步执行。` }
   yield* markPlanAllDone()

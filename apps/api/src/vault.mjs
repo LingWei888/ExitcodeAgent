@@ -82,6 +82,9 @@ export function validateVaultData(data) {
 
 const sessions = new Map()
 
+// 会话空闲超时：超过该时长没有任何已登录请求，会话失效需重新解锁
+export const SESSION_IDLE_TIMEOUT_MS = Number(process.env.EXITCODE_SESSION_IDLE_MS || 20 * 60 * 1000)
+
 function issueToken() {
   return randomBytes(32).toString('hex')
 }
@@ -89,7 +92,7 @@ function issueToken() {
 function createSessionFromPassword(record, password, data) {
   const token = issueToken()
   const key = deriveKey(password, decode(record.salt))
-  sessions.set(token, { key, salt: decode(record.salt), data })
+  sessions.set(token, { key, salt: decode(record.salt), data, lastUsedAt: Date.now() })
   return token
 }
 
@@ -126,7 +129,16 @@ export async function unlockAccount(password) {
 }
 
 export function touchSession(token) {
-  return sessions.get(token) ?? null
+  const session = sessions.get(token)
+  if (!session) return null
+  const now = Date.now()
+  // 空闲超时：超过 SESSION_IDLE_TIMEOUT_MS 没有请求，会话作废
+  if (now - session.lastUsedAt > SESSION_IDLE_TIMEOUT_MS) {
+    sessions.delete(token)
+    return null
+  }
+  session.lastUsedAt = now
+  return session
 }
 
 export function lockSession(token) {
