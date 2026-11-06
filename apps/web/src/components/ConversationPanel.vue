@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { ArrowUp, Eraser, FolderOpen, GitBranch, GitMerge, Settings2, Square, Terminal, X } from 'lucide-vue-next'
 import {
   appendUserMessage,
+  agentStatus,
   clearChat,
   createAssistantMessage,
   createSession,
@@ -10,16 +11,19 @@ import {
   currentProject,
   currentSession,
   dismissSessionUndo,
+  resetAgentStatus,
   restoreSessionUndo,
   store,
   undoSessionAt
 } from '../store'
 import type { Message, PlanItemStatus, Session, ToolCall } from '../types'
-import { runAgent } from '../services/agent'
+import { approveCommand, runAgent } from '../services/agent'
 import { forkSessionFromMain, mergeSessionToMain, restoreSessionFiles } from '../services/api'
 import { sessionToTurns, streamModel, toFriendlyError } from '../services/model'
 import MessageItem from './MessageItem.vue'
 import BranchGraph from './BranchGraph.vue'
+import ApprovalCard from './ApprovalCard.vue'
+import type { PendingApproval } from './ApprovalCard.vue'
 
 const draft = ref('')
 const listEl = ref<HTMLElement | null>(null)
@@ -28,8 +32,10 @@ const runState = ref<'idle' | 'running'>('idle')
 const inputError = ref('')
 const controller = ref<AbortController | null>(null)
 const activeMessageId = ref('')
-const stepState = ref<{ index: number } | null>(null)
-const runPhase = ref<'planning' | 'executing' | 'verifying' | 'compacting' | 'done' | ''>('')
+const stepState = ref<{ index: number; total?: number } | null>(null)
+const runPhase = ref<'planning' | 'executing' | 'verifying' | 'compacting' | 'fixing' | 'done' | ''>('')
+const pendingApproval = ref<PendingApproval | null>(null)
+const approvingBusy = ref(false)
 const graphOpen = ref(false)
 const merging = ref(false)
 const confirmClear = ref(false)
@@ -61,6 +67,8 @@ const phaseText = computed(() => {
       return '正在验证结果'
     case 'compacting':
       return '正在压缩历史上下文'
+    case 'fixing':
+      return '正在自动修复'
     case 'done':
       return '已完成'
     default:
@@ -69,7 +77,7 @@ const phaseText = computed(() => {
 })
 const runLabel = computed(() => {
   if (!isRunning.value) return ''
-  const round = stepState.value ? `回合 ${stepState.value.index} · ` : ''
+  const round = stepState.value ? `回合 ${stepState.value.index}${stepState.value.total ? `/${stepState.value.total}` : ''} · ` : ''
   return `${round}${phaseText.value}`
 })
 const tokenLabel = computed(() => {
@@ -146,6 +154,27 @@ function autosize(): void {
   el.style.height = `${Math.min(el.scrollHeight, 180)}px`
 }
 
+async function decideApproval(approve: boolean): Promise<void> {
+  const approval = pendingApproval.value
+  if (!approval || approvingBusy.value) return
+  approvingBusy.value = true
+  try {
+    await approveCommand(approval.approvalId, approve)
+    if (approve) {
+      approval.submitted = true
+    } else {
+      pendingApproval.value = null
+      agentStatus.approvalPending = false
+    }
+  } catch (error) {
+    flashNotice(error instanceof Error ? error.message : '审批提交失败。')
+    pendingApproval.value = null
+    agentStatus.approvalPending = false
+  } finally {
+    approvingBusy.value = false
+  }
+}
+
 async function send(): Promise<void> {
   const text = draft.value.trim()
   if (!text || isRunning.value) return
@@ -170,6 +199,12 @@ async function send(): Promise<void> {
   store.streaming = true
   stepState.value = null
   runPhase.value = ''
+  agentStatus.running = true
+  agentStatus.phase = ''
+  agentStatus.stepIndex = 0
+  agentStatus.stepTotal = 0
+  agentStatus.currentToolTitle = ''
+  agentStatus.approvalPending = false
 
   let inputTokens = 0
   let outputTokens = 0
@@ -179,11 +214,14 @@ async function send(): Promise<void> {
     if (workspace.value) {
       for await (const event of runAgent(connection.value, turns, workspace.value, session.value.id, aborter.signal)) {
         if (event.type === 'step') {
-          const step = { index: event.index ?? 1 }
+          const step = { index: event.index ?? 1, total: event.total }
           stepState.value = step
           message.step = step
+          agentStatus.stepIndex = step.index
+          agentStatus.stepTotal = step.total ?? 0
         } else if (event.type === 'phase') {
           runPhase.value = event.phase ?? ''
+          agentStatus.phase = event.phase ?? ''
         } else if (event.type === 'plan' && Array.isArray(event.plan)) {
           message.plan = event.plan
         } else if (event.type === 'plan_update' && event.planId && message.plan) {
@@ -199,11 +237,39 @@ async function send(): Promise<void> {
           if (target && target.state === 'pending') {
             target.progressChars = event.chars ?? 0
           }
+        } else if (event.type === 'approval') {
+          agentStatus.approvalPending = true
+          agentStatus.currentToolTitle = '执行命令'
+          if (event.toolId) {
+            upsertTool(message, {
+              id: event.toolId,
+              kind: 'execute_command',
+              title: '执行命令',
+              command: event.command,
+              state: 'waiting'
+            })
+            ensureToolBlock(message, event.toolId)
+          }
+          if (event.command) {
+            pendingApproval.value = {
+              approvalId: event.approvalId ?? '',
+              toolId: event.toolId ?? '',
+              command: event.command,
+              cwd: event.cwd ?? '',
+              detail: event.detail ?? '',
+              timeoutAt: Date.now() + (event.timeoutMs ?? 5 * 60 * 1000)
+            }
+          }
         } else if (event.tool) {
           upsertTool(message, event.tool)
+          if (event.type === 'tool') agentStatus.currentToolTitle = event.tool.title
           if (event.type === 'tool') ensureToolBlock(message, event.tool.id)
           if (event.type === 'tool_result') {
             recordFileChange(event.tool)
+            if (pendingApproval.value && event.tool.id === pendingApproval.value.toolId) {
+              pendingApproval.value = null
+              agentStatus.approvalPending = false
+            }
             if (event.tool.failed) {
               warnings.push(`工具「${event.tool.title}」执行失败，请查看上方输出。`)
             }
@@ -258,6 +324,9 @@ async function send(): Promise<void> {
     activeMessageId.value = ''
     stepState.value = null
     runPhase.value = ''
+    pendingApproval.value = null
+    approvingBusy.value = false
+    resetAgentStatus()
     store.streaming = false
   }
 }
@@ -402,29 +471,21 @@ function suggest(text: string): void {
             {{ workspace ? '服务器工作区' : '未关联工作区' }}
           </span>
           <span class="msg-count">{{ messages.length }} 条消息</span>
-          <button
-            class="chip"
-            type="button"
-            :disabled="merging"
-            :title="'把当前分支的文件改动合并进主分支'"
-            @click="mergeCurrent"
-          >
-            <GitMerge :size="12" />
-            {{ merging ? '合并中…' : '合并到主分支' }}
-          </button>
-          <button
-            class="chip"
-            :class="{ confirm: confirmClear }"
-            type="button"
-            :title="confirmClear ? '再次点击确认清空（文件改动保留）' : '清空聊天记录（只清消息，保留文件改动）'"
-            @click="requestClearChat"
-          >
-            <Eraser :size="12" />
-            {{ confirmClear ? '再次点击确认清空' : '清空聊天' }}
-          </button>
+
+
           <button class="chip graph-chip" type="button" @click="graphOpen = true">
             <GitBranch :size="12" />
             分支图
+          </button>
+          <button
+              class="chip"
+              :class="{ confirm: confirmClear }"
+              type="button"
+              :title="confirmClear ? '再次点击确认清空（文件改动保留）' : '清空聊天记录（只清消息，保留文件改动）'"
+              @click="requestClearChat"
+          >
+            <Eraser :size="12" />
+            {{ confirmClear ? '再次点击确认清空' : '清空聊天' }}
           </button>
         </div>
       </div>
@@ -470,6 +531,16 @@ function suggest(text: string): void {
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="approval-anchor">
+      <ApprovalCard
+        v-if="pendingApproval"
+        :approval="pendingApproval"
+        :busy="approvingBusy"
+        @approve="decideApproval(true)"
+        @reject="decideApproval(false)"
+      />
     </div>
 
     <footer class="composer-wrap">
@@ -815,7 +886,7 @@ function suggest(text: string): void {
   flex: none;
   border-radius: var(--radius-s);
   background: var(--accent);
-  color: #1b0d04;
+  color: #ffffff;
   transition: background-color 0.15s ease, opacity 0.15s ease;
 }
 
@@ -852,5 +923,16 @@ function suggest(text: string): void {
 
 .save-note {
   color: var(--text-muted);
+}
+
+.approval-anchor {
+  position: relative;
+  z-index: 20;
+  flex: none;
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 22px 8px;
+  box-sizing: border-box;
 }
 </style>

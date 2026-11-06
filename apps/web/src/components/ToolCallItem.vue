@@ -39,6 +39,7 @@ const icon = computed(() => {
 
 const stateCopy = computed(() => {
   if (props.tool.state === 'running') return '执行中'
+  if (props.tool.state === 'waiting') return '等待确认'
   if (props.tool.state === 'pending') return '排队中'
   if (props.tool.failed) return '失败'
   return '完成'
@@ -118,7 +119,7 @@ async function copyOutput(): Promise<void> {
         <span v-if="tool.state === 'running'" class="mini-dot pulse"></span>
         <AlertTriangle v-else-if="tool.failed" :size="12" />
         <Check v-else-if="tool.state === 'done'" :size="12" />
-        <span v-else class="mini-dot"></span>
+        <span v-else class="mini-dot" :class="{ pulse: tool.state === 'waiting' }"></span>
         {{ stateCopy }}<span v-if="elapsedLabel" class="elapsed">{{ elapsedLabel }}</span>
       </span>
       <ChevronDown v-if="tool.output || tool.diff" class="chevron" :class="{ open }" :size="14" />

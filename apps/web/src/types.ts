@@ -8,7 +8,7 @@ export type ToolKind =
   | 'git_commit'
   | 'web_fetch'
 
-export type ToolState = 'pending' | 'running' | 'done'
+export type ToolState = 'pending' | 'running' | 'waiting' | 'done'
 
 export type PlanItemStatus = 'pending' | 'running' | 'done' | 'failed'
 

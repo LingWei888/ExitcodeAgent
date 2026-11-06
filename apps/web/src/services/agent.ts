@@ -17,6 +17,7 @@ export interface AgentEvent {
     | 'tool_pending'
     | 'tool_progress'
     | 'tool_result'
+    | 'approval'
     | 'text'
     | 'usage'
     | 'warning'
@@ -24,7 +25,7 @@ export interface AgentEvent {
   index?: number
   total?: number
   text?: string
-  phase?: 'planning' | 'executing' | 'verifying' | 'compacting' | 'done'
+  phase?: 'planning' | 'executing' | 'verifying' | 'compacting' | 'fixing' | 'done'
   label?: string
   plan?: PlanItem[]
   planId?: string
@@ -32,9 +33,36 @@ export interface AgentEvent {
   tool?: ToolCall
   toolId?: string
   chars?: number
+  approvalId?: string
+  command?: string
+  cwd?: string
+  detail?: string
+  time?: number
+  timeoutMs?: number
   input?: number
   output?: number
   message?: string
+}
+
+export async function approveCommand(approvalId: string, approve: boolean): Promise<void> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  const token = getSessionToken()
+  if (token) headers.authorization = `Bearer ${token}`
+  const response = await fetch('/api/agent/approve', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ approvalId, approve })
+  })
+  if (!response.ok) {
+    let message = `审批提交失败（HTTP ${response.status}）`
+    try {
+      const body = await response.json()
+      if (body?.error) message = String(body.error)
+    } catch {
+      // keep the generic message
+    }
+    throw new Error(message)
+  }
 }
 
 export async function* runAgent(

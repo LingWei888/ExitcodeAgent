@@ -26,6 +26,25 @@ export const store = reactive({
   mobileDrawerOpen: false
 })
 
+// 当前 Agent 运行状态（内存态，不落盘），供虚拟宠物与状态栏实时读取
+export const agentStatus = reactive({
+  running: false,
+  phase: '' as 'planning' | 'executing' | 'verifying' | 'compacting' | 'fixing' | 'done' | '',
+  stepIndex: 0,
+  stepTotal: 0,
+  currentToolTitle: '',
+  approvalPending: false
+})
+
+export function resetAgentStatus(): void {
+  agentStatus.running = false
+  agentStatus.phase = ''
+  agentStatus.stepIndex = 0
+  agentStatus.stepTotal = 0
+  agentStatus.currentToolTitle = ''
+  agentStatus.approvalPending = false
+}
+
 let saveTimer: number | undefined
 
 function collectVaultData(): VaultData {
@@ -89,8 +108,8 @@ export async function setupAccount(name: string, password: string): Promise<void
   applyVaultData(data)
 }
 
-export async function unlockAccount(password: string): Promise<void> {
-  const data = await unlockLocalAccount(password)
+export async function unlockAccount(password: string, captcha?: string, captchaId?: string): Promise<void> {
+  const data = await unlockLocalAccount(password, captcha, captchaId)
   applyVaultData(data)
 }
 

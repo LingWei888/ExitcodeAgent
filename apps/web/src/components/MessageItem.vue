@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { Bot, Check, ChevronDown, Copy, GitBranch, Undo2, User } from 'lucide-vue-next'
-import type { Message } from '../types'
+import type { Message, ToolCall } from '../types'
 import ToolCallItem from './ToolCallItem.vue'
+import ToolCallGroup from './ToolCallGroup.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 
 const emit = defineEmits<{ undo: []; branch: [] }>()
 const props = defineProps<{
   message: Message
   phase?: string
-  step?: { index: number } | null
+  step?: { index: number; total?: number } | null
   undoDisabled?: boolean
 }>()
 const thinkingOpen = ref(false)
@@ -28,11 +29,15 @@ const liveStatus = computed(() => {
     case 'planning':
       return '正在规划执行计划…'
     case 'executing':
-      return props.step ? `正在执行 · 第 ${props.step.index} 回合…` : '正在执行…'
+      return props.step
+        ? `正在执行 · 第 ${props.step.index}${props.step.total ? `/${props.step.total}` : ''} 回合…`
+        : '正在执行…'
     case 'verifying':
       return '正在验证结果…'
     case 'compacting':
       return '正在压缩历史上下文…'
+    case 'fixing':
+      return '正在自动修复失败的步骤…'
     case 'done':
       return ''
     default:
@@ -54,6 +59,36 @@ const timelineBlocks = computed(() =>
       : { type: 'tool' as const, tool: props.message.tools.find((tool) => tool.id === block.id) }
   )
 )
+
+// 把消息内连续、已成功完成的工具节点折叠为一条可展开汇总
+const foldedBlocks = computed(() => {
+  const out: Array<
+    | { type: 'text'; text: string }
+    | { type: 'tool'; tool: ToolCall }
+    | { type: 'group'; tools: ToolCall[] }
+  > = []
+  let group: ToolCall[] = []
+  const flush = () => {
+    if (group.length >= 2) out.push({ type: 'group', tools: group })
+    else if (group.length === 1) out.push({ type: 'tool', tool: group[0] })
+    group = []
+  }
+  for (const block of timelineBlocks.value) {
+    if (block.type === 'tool') {
+      if (block.tool && block.tool.state === 'done' && !block.tool.failed) {
+        group.push(block.tool)
+      } else {
+        flush()
+        if (block.tool) out.push({ type: 'tool', tool: block.tool })
+      }
+    } else {
+      flush()
+      out.push(block)
+    }
+  }
+  flush()
+  return out
+})
 
 async function copyContent(): Promise<void> {
   if (!props.message.content) return
@@ -110,7 +145,7 @@ async function copyContent(): Promise<void> {
         </span>
         <span v-if="message.status === 'streaming' && message.step" class="step-chip">
           <span class="mini-dot pulse"></span>
-          第 {{ message.step.index }} 回合
+          第 {{ message.step.index }}{{ message.step.total ? `/${message.step.total}` : '' }} 回合
         </span>
         <span v-else-if="message.stepsUsed" class="step-chip">共 {{ message.stepsUsed }} 回合</span>
         <time>{{ message.time }}</time>
@@ -151,7 +186,7 @@ async function copyContent(): Promise<void> {
       <div v-if="thinkingOpen && message.thinking" class="thinking-block">{{ message.thinking }}</div>
 
       <div v-if="hasBlocks" class="timeline-blocks">
-        <template v-for="(block, index) in timelineBlocks" :key="`${block.type}-${index}`">
+        <template v-for="(block, index) in foldedBlocks" :key="`${block.type}-${index}`">
           <MarkdownRenderer
             v-if="block.type === 'text'"
             class="content-block"
@@ -159,7 +194,8 @@ async function copyContent(): Promise<void> {
             :text="block.text"
             :streaming="message.status === 'streaming'"
           />
-          <ToolCallItem v-else-if="block.tool" class="content-tool" :tool="block.tool" />
+          <ToolCallItem v-else-if="block.type === 'tool'" class="content-tool" :tool="block.tool" />
+          <ToolCallGroup v-else-if="block.type === 'group'" :tools="block.tools" />
         </template>
         <span v-if="message.status === 'streaming'" class="stream-caret"></span>
       </div>
@@ -209,7 +245,7 @@ async function copyContent(): Promise<void> {
 
 .avatar.agent {
   background: var(--accent);
-  color: #1b0d04;
+  color: #ffffff;
 }
 
 .body {
@@ -447,7 +483,7 @@ async function copyContent(): Promise<void> {
 
 .plan-item.running .plan-idx {
   background: var(--accent);
-  color: #1b0d04;
+  color: #ffffff;
 }
 
 .plan-item.running .plan-status {

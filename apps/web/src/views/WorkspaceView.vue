@@ -8,6 +8,7 @@ import ConversationPanel from '../components/ConversationPanel.vue'
 import StatusDrawer from '../components/StatusDrawer.vue'
 import ModelSettings from '../components/ModelSettings.vue'
 import ProjectForm from '../components/ProjectForm.vue'
+import VirtualPet from '../components/VirtualPet.vue'
 
 const hasSession = computed(() => Boolean(store.currentSessionId && store.sessions[store.currentSessionId]))
 </script>
@@ -34,6 +35,7 @@ const hasSession = computed(() => Boolean(store.currentSessionId && store.sessio
     </div>
     <ModelSettings v-if="store.showSettings" />
     <ProjectForm v-if="store.showProjectForm" />
+    <VirtualPet />
   </div>
 </template>
 
